@@ -1,0 +1,14 @@
+# psp-recomp pad script v3
+# Import SOCOM from a North American Acid 1 save and reach the points award.
+# Requires ULUS10006001 beneath the selected memory-stick root.
+# PPSSPP timing columns are not yet oracle-validated.
+# ppsspp_vblank runtime_present mask ppsspp_width runtime_width
+7200 7200 0008 4 20
+8000 8000 2000 4 20
+8800 8800 2000 4 20
+10000 10000 2000 4 20
+11000 11000 2000 4 20
+19000 19000 2000 4 20
+32000 32000 2000 4 20
+47000 47000 2000 4 20
+54000 54000 2000 4 20

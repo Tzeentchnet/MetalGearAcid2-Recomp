@@ -1,0 +1,13 @@
+# psp-recomp pad script v3
+# Load Acid 2 slot 003, enter Arena, and select Easy.
+# Requires ULUS10077003 beneath the selected memory-stick root.
+# PPSSPP timing columns are not yet oracle-validated.
+# ppsspp_vblank runtime_present mask ppsspp_width runtime_width
+7200 7200 0008 4 20
+9200 9200 0040 4 20
+9500 9500 0040 4 20
+9800 9800 0040 4 20
+10100 10100 0040 4 20
+10400 10400 0040 4 20
+11000 11000 2000 4 20
+26000 26000 2000 4 20

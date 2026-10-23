@@ -1,0 +1,37 @@
+# User-supplied game media and extracted game code.
+*.iso
+*.ISO
+*.cso
+*.CSO
+*.pbp
+*.PBP
+*.prx
+*.PRX
+/Vimm's Lair.txt
+
+# Generated recompilation, native build output, and protected evidence.
+/build/
+/out/
+/memstick/
+*.trace
+*.log
+/dispatch_dump.bin
+/edram.bin
+/nidseq_mine.txt
+/interp_fallback_test.misses
+/fb_present.ppm
+/capture_present_*.ppm
+/snap_*.ppm
+/snap_present_*.ppm
+
+# Local reverse-engineering and editor state.
+*.gpr
+*.rep
+*.db
+/.vs/
+/.vscode/
+
+# Python caches.
+__pycache__/
+*.pyc
+.pytest_cache/
