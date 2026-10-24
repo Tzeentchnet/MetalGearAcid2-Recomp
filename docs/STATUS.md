@@ -12,6 +12,12 @@
 | PPSSPP boot oracle | Pass | One-instruction entry trace |
 | Interpreter fallback | Pass | Unaligned accesses and taken/not-taken branch-budget boundaries |
 | Native full build | Pass | clang-cl Release build compiles 361 generated translation units |
+| Combined graphics build | Pass | One executable contains D3D12, Vulkan, and software; pinned SDL3 DLL is deployed |
+| Graphics launcher | Pass | Renderer, 1x-8x internal resolution, 1x-5x xBRZ, and D3D12 shading settings persist |
+| D3D12 high resolution | Pass | 8x (3840x2176), 2x xBRZ, full-rate shading reaches Arena presentation 45000 |
+| Vulkan hardware backend | Pass | 2x xBRZ reaches Arena presentation 45000 on the native-resolution GE target |
+| Software graphics baseline | Pass | Software-only preset and GDI presenter reach presentation 120 |
+| Fullscreen toggle | Pass | F11 expands and restores both SDL3 hardware windows without device loss |
 | Native boot trace | Pass | Strict boot reaches multiple stage overlays and async/callback threads |
 | Native module policy | Pass | 3 core PRXs and 8 observed stage paths activate 10 exact native tables |
 | Native/interpreted differential | Pass | Byte-identical tutorial, Stage 01 briefing, and isolated Arena captures |
@@ -28,9 +34,11 @@
 
 The current milestone is deterministic, input-driven native execution through
 the opening movement tutorial plus authentic-save coverage of Acid 1 import,
-intermission, the Stage 01 briefing, and Arena gameplay. The main module and
-ten exercised dynamic-module images are recompiled. Unconfigured plaintext
+intermission, the Stage 01 briefing, and Arena gameplay. Software remains the
+pixel-exact oracle; D3D12 now provides the validated high-resolution path and
+Vulkan provides an alternate native-resolution hardware path. The main module
+and ten exercised dynamic-module images are recompiled. Unconfigured plaintext
 PRXs retain strict interpreter fallback. Presentation-index differentials are
 exact in all three exercised gameplay lanes. Secure save creation/reload,
-longer gameplay, media behavior, automated PPSSPP frame comparison, and soak
-testing are still required; this is not yet full-game compatibility.
+longer gameplay, media behavior, automated PPSSPP hardware-frame comparison,
+and soak testing are still required; this is not yet full-game compatibility.

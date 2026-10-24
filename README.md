@@ -42,6 +42,9 @@ for static translation.
   intermission map, Stage 01 aircraft briefing, and Arena Easy gameplay.
 - Native differentials produce byte-identical software-framebuffer checkpoints
   in the tutorial, Stage 01 briefing, and Arena gameplay.
+- The default build exposes D3D12, Vulkan, and software renderers. D3D12
+  supports 1x-8x internal rendering, both hardware backends support optional
+  2x-5x xBRZ texture scaling, and F11 toggles desktop fullscreen.
 - Full front-end and gameplay validation are not yet complete.
 
 ## Requirements
@@ -50,8 +53,14 @@ for static translation.
 - Python 3.11 or newer
 - CMake 3.25 or newer and Ninja
 - Visual Studio 2022 Build Tools with clang-cl and a Windows SDK
-- `psp-recomp` at `D:\Github\psp-recomp`, or pass another
-  `PSP_RECOMP_DIR` to CMake and `--toolkit` to the generator
+- Vulkan SDK when building the default Vulkan backend. A standard
+  `C:\VulkanSDK\<version>` install is detected automatically.
+- `psp-recomp` commit `138c2b8` or newer at `D:\Github\psp-recomp`, or pass
+  another `PSP_RECOMP_DIR` to CMake and `--toolkit` to the generator
+
+The default preset downloads the pinned SDL3 3.2.20 VC development package
+when SDL3 is not already discoverable by CMake. Set `MGA2_FETCH_SDL3=OFF` and
+provide `SDL3_DIR` to require a local package instead.
 
 The generator honors `PSP_RECOMP_CODEGEN_CACHE` and
 `PSP_RECOMP_FUNCTION_CATALOG`. When they are unset, it discovers the private
@@ -81,6 +90,14 @@ cmake --preset clang-cl
 cmake --build --preset clang-cl --target mga2_driver
 ```
 
+This builds D3D12, Vulkan, and software into one executable. The deterministic
+software-only baseline remains available as a separate preset:
+
+```powershell
+cmake --preset clang-cl-software
+cmake --build --preset clang-cl-software --target mga2_driver
+```
+
 ## Run
 
 ```powershell
@@ -88,14 +105,54 @@ $env:PSP_ISO = "$PWD\Metal Gear Acid 2 (USA).iso"
 $env:SR_MEMSTICK = "$PWD\memstick"
 $env:SR_MODULE_LOG = "1"
 out\build\clang-cl\mga2.exe --boot `
-  build\mga2\gen\mga2_image.bin 08804000 08804128 none
+  build\mga2\gen\mga2_image.bin 08804000 08804128 none --gui
 ```
 
-The initial build uses the software renderer and Win32 presenter. Keep strict
-dispatch enabled; diagnostic permissive modes are not acceptance evidence.
-Configured dynamic modules use native dispatch by default. For differential
-testing only, `SR_DISABLE_NATIVE_MODULES=*` disables every dynamic table; a
-comma-separated list of table names disables selected tables.
+The first windowed run opens graphics and controller setup. Reopen both
+dialogs later with:
+
+```powershell
+out\build\clang-cl\mga2.exe --configure
+```
+
+## Graphics quality
+
+The combined launcher offers **Automatic**, **D3D12 hardware**,
+**Software reference**, and **Vulkan**. Automatic selects D3D12 when it is
+compiled in.
+
+For the highest-quality 4K path:
+
+1. Select **D3D12 hardware**.
+2. Select **8x (3840x2176)** internal resolution.
+3. Select **2x xBRZ** or **3x xBRZ** texture upscaling.
+4. Select **Full resolution (best quality)** D3D12 shading.
+5. Press **F11** in the game window for borderless desktop fullscreen.
+
+The PSP display is 480:272, so 8x is 3840x2176 rather than exactly 3840x2160.
+Presentation preserves that aspect ratio and adds a few black pixels on a UHD
+display instead of stretching the image.
+
+| Renderer | Internal GE resolution | Texture scaling | Role |
+|---|---|---|---|
+| D3D12 | 1x-8x | 1x-5x xBRZ | Recommended high-resolution renderer |
+| Vulkan | Native 512x272 target | 1x-5x xBRZ | Alternate hardware renderer |
+| Software | Native PSP resolution | None | Pixel-exact reference baseline |
+
+xBRZ scales decoded game textures before hardware upload. It does not scale
+framebuffer/render-target textures, and higher factors can use substantially
+more GPU memory. The D3D12 **Balanced** shading option uses variable-rate
+shading on supported GPUs; **Full resolution** shades every internal-resolution
+fragment and is the appropriate quality setting for 4K screenshots.
+
+Settings are persisted in `graphics.ini` beside the executable. The equivalent
+keys are `renderer`, `internal_resolution`, `texture_scale`, and
+`d3d12_full_rate`.
+
+Keep strict dispatch enabled; diagnostic permissive modes are not acceptance
+evidence. Configured dynamic modules use native dispatch by default. For
+differential testing only, `SR_DISABLE_NATIVE_MODULES=*` disables every dynamic
+table; a comma-separated list of table names disables selected tables.
 
 For the current deterministic native checkpoint, set
 `SR_PADSCRIPT=tools\mga2\new_game_runtime.pad`,

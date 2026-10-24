@@ -289,3 +289,53 @@ Two independently traced presentation-14000 runs produced the same
 software-framebuffer SHA-256:
 `32d2126ef5adab31c3eff7c853eccc97b88cad72f0cd1c918f9835eddf422b41`.
 No renderer workaround or title-specific suppression is warranted.
+
+## MGA2-F-013 - Hardware renderers and xBRZ reach Arena gameplay
+
+**Status:** Confirmed
+
+The default clang-cl preset now compiles D3D12, Vulkan, and software into one
+executable. Its launcher exposes and persists all four renderer choices
+(including Automatic), 1x-8x internal resolution, 1x-5x texture scaling, and
+balanced versus full-resolution D3D12 shading. A software-only preset retains
+the deterministic GDI baseline and hides unavailable hardware choices.
+
+SDL3 3.2.20 is fetched from the official release archive with pinned SHA-256
+`33968846724f8b68d58ad0b42274e00e845fb4b35c0ac88cedbe023a755116d4`
+when no local CMake package is available. The Vulkan SDK is discovered from
+its standard Windows install root. The hardware build copies the matching
+SDL3 3.2.20 DLL beside `mga2.exe`.
+
+Decoded game textures can be scaled from 2x through 5x with the xBRZ
+implementation used by PPSSPP v1.20.4. D3D12 and Vulkan share one C ABI around
+the scaler. Framebuffer and render-target textures are deliberately excluded;
+they retain each backend's normal ownership and resolution. Scaling is opt-in
+because texture-cache resources and temporary buffers grow quadratically.
+
+The following strict runtime checks completed without an HLE trap, renderer
+fault, device loss, or host crash:
+
+| Build / renderer | Settings | Route | Result |
+|---|---|---|---|
+| Combined / D3D12 | 8x internal (3840x2176), 2x xBRZ, full-rate 1x1 shading | Authentic late-game save to Arena Easy | Clean exit at presentation 45000 |
+| Combined / Vulkan | Native GE target, 2x xBRZ | Same save and Arena input script | Clean exit at presentation 45000 |
+| Combined / D3D12 | 2x internal, 5x xBRZ | Boot/front-end smoke | Clean exit at presentation 120 |
+| Combined / Vulkan | Native GE target, 5x xBRZ | Boot/front-end smoke | Clean exit at presentation 120 |
+| Software-only / GDI | Native PSP resolution | Boot/front-end smoke | Clean exit at presentation 120 |
+
+The first D3D12 Arena attempt exposed a pre-existing fixed capture ceiling:
+one dense frame requested 240,003 decoded vertices against a 240,000-vertex
+limit. The renderer correctly refused a partial upload. Capture storage now
+grows within explicit 1,048,576-vertex and 262,144-batch safety bounds and can
+spill into the existing fenced upload slabs. A regression test captures the
+exact 240,003-vertex case, and the identical 8x Arena rerun reaches
+presentation 45000.
+
+F11 was also exercised on both SDL3 backends. Each window expanded from
+960x544 to the 3440x1440 desktop swapchain, continued rendering, restored to
+960x544, and exited cleanly.
+
+D3D12 is the high-resolution GE path: scaled color/depth targets, feedback,
+copies, and presentation all follow the 1x-8x setting. Vulkan currently
+presents to an arbitrary high-resolution swapchain and supports xBRZ texture
+uploads, but its offscreen GE color/depth target remains native 512x272.

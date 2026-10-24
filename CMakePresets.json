@@ -2,8 +2,8 @@
   "version": 6,
   "configurePresets": [
     {
-      "name": "clang-cl",
-      "displayName": "clang-cl (x64, Ninja, Release)",
+      "name": "clang-cl-base",
+      "hidden": true,
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/out/build/${presetName}",
       "architecture": {
@@ -24,12 +24,35 @@
         "lhs": "${hostSystemName}",
         "rhs": "Windows"
       }
+    },
+    {
+      "name": "clang-cl",
+      "displayName": "clang-cl (D3D12 + Vulkan, x64, Release)",
+      "inherits": "clang-cl-base",
+      "cacheVariables": {
+        "MGA2_ENABLE_D3D12": "ON",
+        "MGA2_ENABLE_VULKAN": "ON",
+        "MGA2_FETCH_SDL3": "ON"
+      }
+    },
+    {
+      "name": "clang-cl-software",
+      "displayName": "clang-cl (software reference, x64, Release)",
+      "inherits": "clang-cl-base",
+      "cacheVariables": {
+        "MGA2_ENABLE_D3D12": "OFF",
+        "MGA2_ENABLE_VULKAN": "OFF"
+      }
     }
   ],
   "buildPresets": [
     {
       "name": "clang-cl",
       "configurePreset": "clang-cl"
+    },
+    {
+      "name": "clang-cl-software",
+      "configurePreset": "clang-cl-software"
     }
   ]
 }
