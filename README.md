@@ -66,6 +66,39 @@ The generator honors `PSP_RECOMP_CODEGEN_CACHE` and
 `PSP_RECOMP_FUNCTION_CATALOG`. When they are unset, it discovers the private
 stores below `%LOCALAPPDATA%\psp-recomp`.
 
+## Quick install
+
+`install.bat` verifies the source requirements, initializes the Visual Studio
+x64 environment, verifies and extracts the user-owned ISO, generates the
+native code, builds the project, and stages a runnable installation. It checks
+prerequisites but does not install system software or copy the ISO.
+
+Place the supported ISO beside the script under its default name, then run
+from Command Prompt or double-click:
+
+```bat
+install.bat
+```
+
+The default hardware build is staged in `out\install\clang-cl`. Start it with
+`Play Metal Gear Acid 2.bat` in that directory. The launcher records the
+verified ISO's original location and uses an isolated `memstick` directory
+inside the installation.
+
+Paths and the renderer set can be overridden:
+
+```bat
+install.bat --iso "E:\Games\Metal Gear Acid 2 (USA).iso"
+install.bat --toolkit "E:\Source\psp-recomp"
+install.bat --install-dir "%LOCALAPPDATA%\Programs\Metal Gear Acid 2"
+install.bat --software-only
+```
+
+`--software-only` uses the `clang-cl-software` preset and does not require the
+Vulkan SDK. Existing `PSP_RECOMP_DIR`, `PSP_RECOMP_CODEGEN_CACHE`, and
+`PSP_RECOMP_FUNCTION_CATALOG` values are preserved; otherwise the documented
+defaults are used. Run `install.bat --help` for the complete option summary.
+
 ## Extract and generate
 
 ```powershell
