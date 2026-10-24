@@ -32,24 +32,40 @@ be committed. Supply your own supported USA ISO.
 `BOOT.BIN`. The project verifies both files and uses only the plaintext copy
 for static translation.
 
-## Current status
 
-- The disc and main executable are pinned and verified.
-- All 18,401 discovered main-module functions and 5,166 functions across ten
-  exact dynamic-module dispatch tables generate successfully.
-- All 23,260 cacheable functions produce an unchanged all-hit rerun.
-- Code generation emits zero trapping stubs.
-- A PPSSPP interpreter trace pins the standalone boot contract.
-- Exact native policy covers KJFS, ZLIB, SOUND, and seven unique stage-overlay
-  images. Other plaintext PRXs retain bounded interpreter fallback. Seven
-  exact encrypted firmware-module identities use named HLE policy.
-- Strict native boot reaches multiple stage overlays, async/callback threads,
-  and the `sceFont` HLE after loading raw-LBN `libfont.prx`.
-- Authentic Acid 1 and Acid 2 secure savedata loads successfully. The Acid 1
-  import transfers SOCOM and awards 54 points.
-- The default build exposes D3D12, Vulkan, and software renderers. D3D12
-  supports 1x-8x internal rendering, both hardware backends support optional
-  2x-5x xBRZ texture scaling, and F11 toggles desktop fullscreen.
+## Graphics quality
+
+The combined launcher offers **Automatic**, **D3D12 hardware**,
+**Software reference**, and **Vulkan**. Automatic selects D3D12 when it is
+compiled in.
+
+For the highest-quality 4K path:
+
+1. Select **D3D12 hardware**.
+2. Select **8x (3840x2176)** internal resolution.
+3. Select **2x xBRZ** or **3x xBRZ** texture upscaling.
+4. Select **Full resolution (best quality)** D3D12 shading.
+5. Press **F11** in the game window for borderless desktop fullscreen.
+
+The PSP display is 480:272, so 8x is 3840x2176 rather than exactly 3840x2160.
+Presentation preserves that aspect ratio and adds a few black pixels on a UHD
+display instead of stretching the image.
+
+| Renderer | Internal GE resolution | Texture scaling | Role |
+|---|---|---|---|
+| D3D12 | 1x-8x | 1x-5x xBRZ | Recommended high-resolution renderer |
+| Vulkan | Native 512x272 target | 1x-5x xBRZ | Alternate hardware renderer |
+| Software | Native PSP resolution | None | Pixel-exact reference baseline |
+
+xBRZ scales decoded game textures before hardware upload. It does not scale
+framebuffer/render-target textures, and higher factors can use substantially
+more GPU memory. The D3D12 **Balanced** shading option uses variable-rate
+shading on supported GPUs; **Full resolution** shades every internal-resolution
+fragment and is the appropriate quality setting for 4K screenshots.
+
+Settings are persisted in `graphics.ini` beside the executable. The equivalent
+keys are `renderer`, `internal_resolution`, `texture_scale`, and
+`d3d12_full_rate`.
 
 ## Requirements
 
@@ -84,10 +100,17 @@ from Command Prompt or double-click:
 install.bat
 ```
 
-The default hardware build is staged in `out\install\clang-cl`. Start it with
-`Play Metal Gear Acid 2.bat` in that directory. The launcher records the
-verified ISO's original location and uses an isolated `memstick` directory
-inside the installation.
+The default hardware build is staged in `out\install\clang-cl`. After
+installation, start the game from the project root with:
+
+```bat
+play.bat
+```
+
+The startup script uses the installed hardware launcher when available, then
+falls back to the software-only installation or an existing developer build.
+The installed launcher records the verified ISO's original location and uses
+an isolated `memstick` directory inside the installation.
 
 Paths and the renderer set can be overridden:
 
@@ -137,6 +160,22 @@ cmake --build --preset clang-cl-software --target mga2_driver
 
 ## Run
 
+For normal startup after installation, double-click `play.bat` or run it from
+Command Prompt:
+
+```bat
+play.bat
+```
+
+Pass the supported ISO as the first argument if it has moved since
+installation:
+
+```bat
+play.bat "E:\Games\Metal Gear Acid 2 (USA).iso"
+```
+
+The equivalent manual command for an unstaged developer build is:
+
 ```powershell
 $env:PSP_ISO = "$PWD\Metal Gear Acid 2 (USA).iso"
 $env:SR_MEMSTICK = "$PWD\memstick"
@@ -151,86 +190,3 @@ dialogs later with:
 ```powershell
 out\build\clang-cl\mga2.exe --configure
 ```
-
-## Graphics quality
-
-The combined launcher offers **Automatic**, **D3D12 hardware**,
-**Software reference**, and **Vulkan**. Automatic selects D3D12 when it is
-compiled in.
-
-For the highest-quality 4K path:
-
-1. Select **D3D12 hardware**.
-2. Select **8x (3840x2176)** internal resolution.
-3. Select **2x xBRZ** or **3x xBRZ** texture upscaling.
-4. Select **Full resolution (best quality)** D3D12 shading.
-5. Press **F11** in the game window for borderless desktop fullscreen.
-
-The PSP display is 480:272, so 8x is 3840x2176 rather than exactly 3840x2160.
-Presentation preserves that aspect ratio and adds a few black pixels on a UHD
-display instead of stretching the image.
-
-| Renderer | Internal GE resolution | Texture scaling | Role |
-|---|---|---|---|
-| D3D12 | 1x-8x | 1x-5x xBRZ | Recommended high-resolution renderer |
-| Vulkan | Native 512x272 target | 1x-5x xBRZ | Alternate hardware renderer |
-| Software | Native PSP resolution | None | Pixel-exact reference baseline |
-
-xBRZ scales decoded game textures before hardware upload. It does not scale
-framebuffer/render-target textures, and higher factors can use substantially
-more GPU memory. The D3D12 **Balanced** shading option uses variable-rate
-shading on supported GPUs; **Full resolution** shades every internal-resolution
-fragment and is the appropriate quality setting for 4K screenshots.
-
-Settings are persisted in `graphics.ini` beside the executable. The equivalent
-keys are `renderer`, `internal_resolution`, `texture_scale`, and
-`d3d12_full_rate`.
-
-Keep strict dispatch enabled; diagnostic permissive modes are not acceptance
-evidence. Configured dynamic modules use native dispatch by default. For
-differential testing only, `SR_DISABLE_NATIVE_MODULES=*` disables every dynamic
-table; a comma-separated list of table names disables selected tables.
-
-For the current deterministic native checkpoint, set
-`SR_PADSCRIPT=tools\mga2\new_game_runtime.pad`,
-`SR_FAST_FORWARD_PRESENT=82000`, and `SR_EXIT_AFTER_PRESENT=82000`.
-The script enters **NEW GAME**, selects **EASY**, skips MGA1 save transfer, and
-advances through the opening movement instructions. Its runtime presentation
-timings are verified; the PPSSPP timing columns remain provisional until the
-same input sequence is captured against the oracle.
-
-Software-framebuffer captures at presentations 30000 and 82000 have SHA-256
-`eb4abcd6e454a3c13c3724b07027ac9cac45c98e2e42d8ecda2780ee5c870d9f`
-and `d679ddbd2b54a666fec067ad9f47658a7795cefe2902be724199307fdb5d30d2`.
-Both hashes reproduce with all dynamic native tables disabled.
-
-## Optional save-based validation
-
-The save fixtures are not distributed with this project. Each test uses an
-isolated memory-stick root containing the listed directory beneath
-`PSP\SAVEDATA`:
-
-| Script | Required save directory | Validated path |
-|---|---|---|
-| `tools\mga2\import_mga1_runtime.pad` | `ULUS10006001` | Import SOCOM and reach the 54-point award |
-| `tools\mga2\load_save_runtime.pad` | `ULUS10077003` | Load Acid 2 slot `003` into intermission |
-| `tools\mga2\stage01_runtime.pad` | `ULUS10077003` | Enter Harbor Area and advance the aircraft briefing |
-| `tools\mga2\arena_runtime.pad` | `ULUS10077003` | Enter Arena Easy and reach the playable card interface |
-
-Validation used these publicly posted North American saves:
-
-| GameFAQs save | Description | Archive SHA-256 |
-|---:|---|---|
-| Acid 1 `10243` | 100% completion | `7c451329205896f1fa125a7152683845fa4a165b0106ec743a147bd48b748bc8` |
-| Acid 2 `11430` | After the tutorial, complete card library | `80a2e5967c62b3915dceea3daeb6df730d20fab3c46f2df550dfcd4c42120f54` |
-| Acid 2 `11261` | Before the new Metal Gear fight | `3ba054bbf48bf2feef1a0c6c10f540315993be1b1a2fc630fc2cd412d5727b44` |
-
-The source pages are
-[Metal Gear Acid saves](https://gamefaqs.gamespot.com/psp/920776-metal-gear-acid/saves)
-and
-[Metal Gear Acid 2 saves](https://gamefaqs.gamespot.com/psp/928434-metal-gear-acid-2/saves).
-Keep the two Acid 2 fixtures in separate memory-stick roots because both use
-`ULUS10077003`.
-
-See [evidence-backed findings](docs/FINDINGS.md) and
-[validation status](docs/STATUS.md).

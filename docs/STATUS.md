@@ -1,5 +1,26 @@
 # Validation Status
 
+## Current status
+
+- The disc and main executable are pinned and verified.
+- All 18,401 discovered main-module functions and 5,166 functions across ten
+  exact dynamic-module dispatch tables generate successfully.
+- All 23,260 cacheable functions produce an unchanged all-hit rerun.
+- Code generation emits zero trapping stubs.
+- A PPSSPP interpreter trace pins the standalone boot contract.
+- Exact native policy covers KJFS, ZLIB, SOUND, and seven unique stage-overlay
+  images. Other plaintext PRXs retain bounded interpreter fallback. Seven
+  exact encrypted firmware-module identities use named HLE policy.
+- Strict native boot reaches multiple stage overlays, async/callback threads,
+  and the `sceFont` HLE after loading raw-LBN `libfont.prx`.
+- Authentic Acid 1 and Acid 2 secure savedata loads successfully. The Acid 1
+  import transfers SOCOM and awards 54 points.
+- The default build exposes D3D12, Vulkan, and software renderers. D3D12
+  supports 1x-8x internal rendering, both hardware backends support optional
+  2x-5x xBRZ texture scaling, and F11 toggles desktop fullscreen.
+
+## Validation matrix
+
 | Level | Status | Evidence |
 |---|---|---|
 | Exact input | Pass | ISO size and SHA-1 verified |
