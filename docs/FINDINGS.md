@@ -265,3 +265,27 @@ These paths exposed and validated exact native policy for:
 
 No secure-save, loader, HLE, interpreter, memory, or host fault occurs. Secure
 save creation and reload are not yet covered.
+
+## MGA2-F-012 - The abstract tutorial floor is original game art
+
+**Status:** Confirmed
+
+The opening tutorial's bright yellow, white, and purple floor initially
+appeared inconsistent with the otherwise industrial texture set. An
+independent PSP gameplay capture at `2:30-2:40` shows the same abstract atlas,
+black side geometry, purple outlines, camera angle, and character placement:
+
+`https://www.youtube.com/watch?v=vt0S_DG7c9U`
+
+A targeted runtime trace also rules out stale VRAM or a failed texture upload.
+Immediately before the first tutorial draw, the game copies the complete
+`0x40000`-byte indexed source at `0x092928e0` into texture address
+`0x040cc000`; its CLUT follows at `0x092d28e0`. The first transformed draws
+then intentionally select that 512x512 swizzled format-5 texture. The source
+comes from the tutorial resource path
+`disc0:/sce_lbn0x66240_size0xac191`, not a retained title framebuffer.
+
+Two independently traced presentation-14000 runs produced the same
+software-framebuffer SHA-256:
+`32d2126ef5adab31c3eff7c853eccc97b88cad72f0cd1c918f9835eddf422b41`.
+No renderer workaround or title-specific suppression is warranted.

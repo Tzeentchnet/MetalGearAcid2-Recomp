@@ -35,6 +35,8 @@ for static translation.
 - Strict native boot reaches multiple stage overlays, async/callback threads,
   and the `sceFont` HLE after loading raw-LBN `libfont.prx`.
 - A deterministic native input sequence reaches the opening movement tutorial.
+- An independent PSP gameplay capture confirms that the tutorial's abstract
+  yellow, white, and purple floor texture is the original presentation.
 - Authentic Acid 1 and Acid 2 secure savedata loads successfully. The Acid 1
   import transfers SOCOM and awards 54 points; Acid 2 saves reach the
   intermission map, Stage 01 aircraft briefing, and Arena Easy gameplay.

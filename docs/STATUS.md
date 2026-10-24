@@ -19,6 +19,7 @@
 | Front end | Pass | Deterministic captures reach the main menu |
 | Scripted input | Pass | START/CIRCLE/CROSS sequence reaches New Game on Easy |
 | Initial gameplay | Pass | Strict software-renderer run advances through the opening movement tutorial |
+| Tutorial visual oracle | Pass | Independent PSP gameplay footage shows the same abstract floor atlas and geometry |
 | Secure savedata load/import | Pass | Acid 1 SOCOM transfer plus two Acid 2 slot `003` loads |
 | Later-stage coverage | Pass | Intermission and Stage 01 aircraft briefing |
 | Arena gameplay | Pass | Arena Easy reaches the playable card interface |
@@ -31,5 +32,5 @@ intermission, the Stage 01 briefing, and Arena gameplay. The main module and
 ten exercised dynamic-module images are recompiled. Unconfigured plaintext
 PRXs retain strict interpreter fallback. Presentation-index differentials are
 exact in all three exercised gameplay lanes. Secure save creation/reload,
-longer gameplay, media behavior, PPSSPP frame comparison, and soak testing are
-still required; this is not yet full-game compatibility.
+longer gameplay, media behavior, automated PPSSPP frame comparison, and soak
+testing are still required; this is not yet full-game compatibility.
