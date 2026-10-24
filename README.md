@@ -6,6 +6,17 @@ Source-only Windows static recompilation work for **Metal Gear Acid 2
 No game executable, generated game C, disc data, trace, save, or capture should
 be committed. Supply your own supported USA ISO.
 
+> [!NOTE]
+> **Why isn't there just an .exe to download?** Two reasons. First, safety:
+> please don't download random .exe files from the internet, even from
+> GitHub releases, including this one if it ever shows up! It's just good
+> practice to be careful about what you run on your computer. Second, it's
+> the law: this project doesn't own Metal Gear Acid 2, so it's not
+> allowed to hand out a ready-to-play build of the game. Instead, you build
+> the program yourself from this source code and combine it with a copy of
+> the game disc that you already legally own. That way nobody's copyrighted
+> game data ever leaves your own computer.
+
 ## Supported input
 
 | Property | Value |
@@ -34,18 +45,11 @@ for static translation.
   exact encrypted firmware-module identities use named HLE policy.
 - Strict native boot reaches multiple stage overlays, async/callback threads,
   and the `sceFont` HLE after loading raw-LBN `libfont.prx`.
-- A deterministic native input sequence reaches the opening movement tutorial.
-- An independent PSP gameplay capture confirms that the tutorial's abstract
-  yellow, white, and purple floor texture is the original presentation.
 - Authentic Acid 1 and Acid 2 secure savedata loads successfully. The Acid 1
-  import transfers SOCOM and awards 54 points; Acid 2 saves reach the
-  intermission map, Stage 01 aircraft briefing, and Arena Easy gameplay.
-- Native differentials produce byte-identical software-framebuffer checkpoints
-  in the tutorial, Stage 01 briefing, and Arena gameplay.
+  import transfers SOCOM and awards 54 points.
 - The default build exposes D3D12, Vulkan, and software renderers. D3D12
   supports 1x-8x internal rendering, both hardware backends support optional
   2x-5x xBRZ texture scaling, and F11 toggles desktop fullscreen.
-- Full front-end and gameplay validation are not yet complete.
 
 ## Requirements
 

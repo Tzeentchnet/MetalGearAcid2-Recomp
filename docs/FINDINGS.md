@@ -236,13 +236,31 @@ crash occurs.
 **Status:** Confirmed
 
 Three public North American save archives were kept as ignored validation
-inputs:
+inputs. The fixtures are not distributed with this project.
 
-| Game | GameFAQs ID | PSP directory | Archive SHA-256 |
-|---|---:|---|---|
-| Acid 1 | `10243` | `ULUS10006001` | `7c451329205896f1fa125a7152683845fa4a165b0106ec743a147bd48b748bc8` |
-| Acid 2 | `11430` | `ULUS10077003` | `80a2e5967c62b3915dceea3daeb6df730d20fab3c46f2df550dfcd4c42120f54` |
-| Acid 2 | `11261` | `ULUS10077003` | `3ba054bbf48bf2feef1a0c6c10f540315993be1b1a2fc630fc2cd412d5727b44` |
+| Game | GameFAQs ID | Description | PSP directory | Archive SHA-256 |
+|---|---:|---|---|---|
+| Acid 1 | `10243` | 100% completion | `ULUS10006001` | `7c451329205896f1fa125a7152683845fa4a165b0106ec743a147bd48b748bc8` |
+| Acid 2 | `11430` | After the tutorial, complete card library | `ULUS10077003` | `80a2e5967c62b3915dceea3daeb6df730d20fab3c46f2df550dfcd4c42120f54` |
+| Acid 2 | `11261` | Before the new Metal Gear fight | `ULUS10077003` | `3ba054bbf48bf2feef1a0c6c10f540315993be1b1a2fc630fc2cd412d5727b44` |
+
+The source pages are
+[Metal Gear Acid saves](https://gamefaqs.gamespot.com/psp/920776-metal-gear-acid/saves)
+and
+[Metal Gear Acid 2 saves](https://gamefaqs.gamespot.com/psp/928434-metal-gear-acid-2/saves).
+
+Each test uses an isolated memory-stick root containing the listed directory
+beneath `PSP\SAVEDATA`:
+
+| Script | Required save directory | Validated path |
+|---|---|---|
+| `tools\mga2\import_mga1_runtime.pad` | `ULUS10006001` | Import SOCOM and reach the 54-point award |
+| `tools\mga2\load_save_runtime.pad` | `ULUS10077003` | Load Acid 2 slot `003` into intermission |
+| `tools\mga2\stage01_runtime.pad` | `ULUS10077003` | Enter Harbor Area and advance the aircraft briefing |
+| `tools\mga2\arena_runtime.pad` | `ULUS10077003` | Enter Arena Easy and reach the playable card interface |
+
+Keep the two Acid 2 fixtures in separate memory-stick roots because both use
+`ULUS10077003`.
 
 The runtime handles savedata mode 4 and securely decrypts both formats. The
 Acid 1 host file is 30,868 bytes and yields a 30,852-byte payload for game
