@@ -9,8 +9,9 @@
 - Code generation emits zero trapping stubs.
 - A PPSSPP interpreter trace pins the standalone boot contract.
 - Exact native policy covers KJFS, ZLIB, SOUND, and seven unique stage-overlay
-  images. Other plaintext PRXs retain bounded interpreter fallback. Seven
-  exact encrypted firmware-module identities use named HLE policy.
+  images. Exact guards send runtime-modified functions to the interpreter;
+  other plaintext PRXs retain bounded interpreter fallback. Seven exact
+  encrypted firmware-module identities use named HLE policy.
 - Strict native boot reaches multiple stage overlays, async/callback threads,
   and the `sceFont` HLE after loading raw-LBN `libfont.prx`.
 - Authentic Acid 1 and Acid 2 secure savedata loads successfully. The Acid 1
@@ -18,6 +19,11 @@
 - The default build exposes D3D12, Vulkan, and software renderers. D3D12
   supports 1x-8x internal rendering, both hardware backends support optional
   2x-5x xBRZ texture scaling, and F11 toggles desktop fullscreen.
+- The deterministic opening-tutorial dialog benchmark sustains 60.44 displayed
+  FPS at D3D12 4x internal resolution, 2x xBRZ, and full-rate shading.
+- Save-based D3D12 validation keeps the Dead Cell and Stage 01 visuals intact.
+  Stage 01 sustains 59.79 FPS apart from one transition spike; the Dead Cell
+  cutscene and Arena gameplay remain below the fixed-quality 60-FPS target.
 
 ## Validation matrix
 
@@ -37,6 +43,9 @@
 | Graphics launcher | Pass | Renderer, 1x-8x internal resolution, 1x-5x xBRZ, and D3D12 shading settings persist |
 | D3D12 high resolution | Pass | 8x (3840x2176), 2x xBRZ, full-rate shading reaches Arena presentation 45000 |
 | D3D12 framebuffer feedback | Pass | Presentations 27996-28006 match forced-safe reference captures without the stale tutorial silhouette |
+| D3D12 tutorial performance | Pass | Presentation-31000 CIRCLE stress window: 60.44 FPS, 16.76 ms p95, 17.42 ms maximum, 2 cumulative framebuffer readbacks |
+| D3D12 save-scene performance | Partial | Stage 01: 59.79 FPS and 17.07 ms p95; Dead Cell: 48.45 FPS and 38.19 ms p95; Arena gameplay: 53.48 FPS and 32.54 ms p95 |
+| D3D12 cutscene depth/stencil | Pass | Fifty current GPU captures plus a 1920x1088 presentation-28000 capture keep the Dead Cell model and silhouette intact across presentations 27920-28040 |
 | Vulkan hardware backend | Pass | 2x xBRZ reaches Arena presentation 45000 on the native-resolution GE target |
 | Software graphics baseline | Pass | Software-only preset and GDI presenter reach presentation 120 |
 | Fullscreen toggle | Pass | F11 expands and restores both SDL3 hardware windows without device loss |
@@ -60,7 +69,11 @@ intermission, the Stage 01 briefing, and Arena gameplay. Software remains the
 pixel-exact oracle; D3D12 now provides the validated high-resolution path and
 Vulkan provides an alternate native-resolution hardware path. The main module
 and ten exercised dynamic-module images are recompiled. Unconfigured plaintext
-PRXs retain strict interpreter fallback. Presentation-index differentials are
-exact in all three exercised gameplay lanes. Secure save creation/reload,
+PRXs and guarded runtime-modified functions retain strict interpreter fallback.
+Presentation-index differentials are exact in all three exercised gameplay
+lanes, and the fixed-quality D3D12 tutorial path sustains the 59.94 Hz display
+cadence. The save-based visual routes pass, but the Dead Cell guest/GE
+frontend workload and Arena 4x GPU spikes remain performance targets. Secure
+save creation/reload,
 longer gameplay, media behavior, automated PPSSPP hardware-frame comparison,
 and soak testing are still required; this is not yet full-game compatibility.

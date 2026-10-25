@@ -178,7 +178,7 @@ instructions. Presentation 82000 has SHA-256
 No HLE trap, interpreter fault, memory fault, or host crash occurs before
 either bounded clean exit.
 
-## MGA2-F-010 - Exercised plaintext PRXs have exact native dispatch
+## MGA2-F-010 - Exercised plaintext PRXs use exact guarded dispatch
 
 **Status:** Confirmed
 
@@ -209,7 +209,8 @@ zero writes. The clang-cl Release build compiles 361 generated translation
 units.
 
 A strict scripted run logs native activation for the three core PRXs and all
-eight observed stage paths. Tutorial runs with `SR_DISABLE_NATIVE_MODULES=*`
+eight observed stage paths. Exact instruction guards remain active after
+dispatch-table activation. Tutorial runs with `SR_DISABLE_NATIVE_MODULES=*`
 produce byte-identical framebuffers at presentations 30000 and 82000.
 Save-based Stage 01 runs match at presentations 80000, 100000, 120000, and
 130000.
@@ -227,9 +228,17 @@ Arena `a0001.prx` was isolated by disabling only
 
 Disabling every earlier native module changes the Arena random-hand seed and
 therefore is not a valid late-frame comparison for this path. The isolated
-table differential preserves the pre-Arena execution state. No runtime-code
-mismatch, loader failure, HLE trap, interpreter fault, memory fault, or host
-crash occurs.
+table differential preserves the pre-Arena execution state.
+
+The Arena overlay later rewrites three instructions in the function at
+`0x09a0f7d0`. Its exact guard therefore sends that function to the interpreter
+while the remainder of the activated table stays native. A diagnostic
+live-instruction native variant reduced interpreted instructions from
+13,019,660 to 990,705 but did not improve measured throughput, so the exact
+guard and interpreter fallback were retained. The differential above validates
+the guarded dispatch policy; it does not imply that runtime-modified functions
+continue executing stale native code. No unhandled code mismatch, loader
+failure, HLE trap, interpreter fault, memory fault, or host crash occurs.
 
 ## MGA2-F-011 - Authentic secure saves expand runtime coverage
 
@@ -383,3 +392,263 @@ targeted path required 2,245 readbacks over the replay instead of the control's
 55,997. Graphics configuration, texture-scaler, and D3D12 vertex regression
 tests also pass. The fixed D3D12 build also reaches presentation 45000 through
 the authentic late-game Arena route without a renderer fault or host error.
+The GPU-resident 16-bit feedback path in MGA2-F-016 now handles this scene
+without entering the synchronized fallback; the fallback remains the explicit
+correctness route for incompatible layouts.
+
+## MGA2-F-015 - D3D12 direct stencil writes preserve character depth
+
+**Status:** Confirmed
+
+Arena cutscene character models showed moving triangular dark patches under
+D3D12 while the software renderer produced the correct surfaces from the same
+GE stream. At native pixel `(234,104)`, draw 12680 writes the visible front
+surface at depth approximately 9202. Draw 12694 later submits a dark interior
+surface at depth approximately 8192, which correctly fails the PSP `>=` depth
+test in software but appeared in the D3D12 result.
+
+The affected 5551 batches enabled stencil with an always-pass test, KEEP on
+stencil and depth failure, and INCREMENT on depth pass. That state forced the
+destination-snapshot shader path, whose fixed-function PSO used depth ALWAYS;
+the path did not preserve the expected cross-draw depth ownership for these
+surfaces. In one-bit 5551 alpha, the successful increment is
+destination-independent and always writes 255.
+
+The D3D12 runtime now admits safe destination-independent stencil states to its
+direct path. Fixed-function D16 performs the PSP depth test and write, while the
+direct pixel shader emits the known stencil value through alpha. Compatibility
+requires an always-pass stencil test, a no-op depth-fail operation, an
+depth-pass operation that is either a no-op or an unmasked,
+destination-independent write, and blend state that does not consume the
+replaced source alpha. Masked,
+destination-dependent, and otherwise unsupported states remain on the exact
+snapshot path.
+
+Normal 4x D3D12 captures at presentations 27960, 27980, 28000, 28020, and
+28040 keep the animated model surfaces intact without diagnostic overrides.
+The final presentation-28000 capture has SHA-256
+`d4f4a1b46dfd80b2d8bc1f33a605635e628e789b7dde238b741953a8c5463317`.
+Its full-frame Lanczos-downsampled mean absolute error against the native
+software reference is 2.6196, down from 4.4944 for the corrupted D3D12 frame.
+Focused D3D12 pipeline tests cover the accepted 5551 increment state plus
+depth-fail mutations, masked writes, destination-dependent operations, and
+source-alpha blending that must remain manual.
+
+On the same 60-flip late-Arena sample used during diagnosis, throughput is
+31.85 FPS versus 31.53 FPS before the fix, while average GPU time falls from
+11.19 ms to 7.87 ms. This is a correctness fix with a modest workload
+reduction, not a remedy for the remaining guest GE CPU bottleneck.
+
+## MGA2-F-016 - GPU-resident CLUT16 feedback restores tutorial speed
+
+**Status:** Confirmed
+
+The presentation-31,000 tutorial dialog stress case ran at 15.33 displayed FPS
+on a Ryzen 7 9800X3D and GeForce RTX 5070 with the required D3D12 4x internal,
+2x xBRZ, full-rate windowed profile. Slow frames spent approximately 109-122 ms
+in frontend work, while backend CPU time averaged 2.25 ms and GPU work remained
+within budget. Disabling xBRZ or reducing internal resolution to 1x did not
+remove the stall.
+
+The scene reinterprets alternating 512-stride 5551 render targets as 512x512
+CLUT16 textures. D3D12 previously supported GPU feedback only for
+8888-to-CLUT32, so these views repeatedly forced synchronous GPU readback,
+content hashing, CPU palette decode, texture-cache allocation, upload, and
+accidental xBRZ treatment. The fallback decoder had already synchronized the
+whole texture range, but then issued a watched VRAM read for every CLUT16
+texel. If the other framebuffer remained GPU-newer, each of those reads scanned
+the framebuffer cache.
+
+The shared renderer now:
+
+- synchronizes each fallback texture level once and decodes from its bounded
+  host span;
+- accepts compatible unswizzled 565, 5551, and 4444 render targets as CLUT16
+  feedback sources;
+- carries the native source format in canonical texture/shader state;
+- center-samples the scaled target, repacks the sampled color to the native
+  16-bit PSP value, and performs the existing CLUT shift/mask/start lookup; and
+- keeps framebuffer-derived textures out of the ordinary xBRZ texture cache.
+
+Incompatible stride, bounds, format, swizzle, and active-mipmap layouts retain
+the synchronized CPU fallback. `SR_D3D12_DISABLE_FEEDBACK_ALIASES=1` exposes
+that route for differential validation.
+
+The same 120-flip window now records:
+
+| Metric | Before | After |
+|---|---:|---:|
+| Displayed FPS | 15.33 | 60.44 |
+| Average frame interval | 65.24 ms | 16.54 ms |
+| p95 / p99 | 116.74 / 122.31 ms | 16.76 / 17.09 ms |
+| Maximum frame interval | 123.90 ms | 17.42 ms |
+| Average frontend time | 63.03 ms | 15.49 ms |
+| Average backend CPU time | 2.25 ms | 1.05 ms |
+| Maximum GPU time | 8.57 ms | 12.28 ms |
+
+The complete replay's framebuffer statistics changed from 2,689 readbacks,
+zero aliases, and zero feedback snapshots to 2 readbacks, 654,720 aliases, and
+493,587 ordered feedback snapshots. A repeated 1x-xBRZ fallback capture was
+byte-identical across 49 emitted displayed frames. The GPU-feedback comparison
+differed at 2,607 of 6,397,440 logical pixels (0.04075%, mean absolute channel
+error 0.0583), confined to sparse character-edge samples; the dialog, model
+fill, and silhouette remain visually aligned. The optimized route preserves
+native game cadence and does not lower any requested quality setting.
+
+### Renderer reference
+
+This workload is unusually sensitive because the title does not treat the
+render targets as ordinary sampled color textures. It alternates the
+512-stride 5551 buffers at `0x04000000` and `0x04044000`, then submits 240
+sprite draws per rendered frame that view the active buffer as a 512x512
+CLUT16 index surface. Applying xBRZ to that view is both unnecessary and
+incorrect: its source is already a scaled GPU render target, not a decoded
+guest texture.
+
+The D3D12 feedback compatibility matrix is intentionally narrow:
+
+| Native render-target format | Indexed texture view | GPU feedback |
+|---|---|---|
+| 565, 5551, or 4444 | CLUT16 | Accepted |
+| 8888 | CLUT32 | Accepted |
+| Any other pairing | Any | Synchronized CPU fallback |
+
+Admission also requires a matching byte stride, compatible base alignment and
+bounds, an unswizzled view, and a compatible active mip level. These checks
+must remain in place: interpreting only the format pair as sufficient can
+alias a different guest-memory layout. Direct same-format framebuffer textures
+are a separate path from the indexed feedback cases above.
+
+The native source format is carried without enlarging the texture binding or
+shader constant structures. Texture-binding bit 0 marks framebuffer CLUT
+feedback, bit 1 retains the ordinary upscaled-texture flag, and bits 2-3 encode
+the source PSP pixel format. The shader CLUT word mirrors the format in bits
+28-29 while preserving the existing clamp flags in bits 30-31. The pixel
+shader center-samples the internal-resolution texel, repacks it to the original
+PSP 16-bit value, and only then applies the existing CLUT shift, mask, start,
+and palette-format rules. Ordered snapshots are required when a render target
+is sampled and subsequently modified in the same GE stream; using the live
+target for every draw would let later writes change earlier feedback reads.
+
+The correctness fallback still begins with one watched `sr_prepare_read()` for
+the complete texture level. Decoding then uses a bounded host pointer for
+direct-color, CLUT, swizzled, mipmapped, and DXT data. It does not globally
+disable VRAM read watching. Reintroducing `MEM_R8`, `MEM_R16`, or `MEM_R32`
+inside the per-texel loop would restore the pathological behavior: each of the
+262,144 CLUT16 texels could rescan the framebuffer cache while another target
+was GPU-newer.
+
+### Profiling and validation notes
+
+For this title, a large frontend frame time that is insensitive to internal
+resolution and xBRZ is a strong indicator of guest-memory synchronization or
+CPU texture decode rather than shader load. The optimized run deliberately
+moves work back to the GPU, so its maximum GPU time rising from 8.57 ms to
+12.28 ms is expected and remains within one 59.94 Hz period. Alias, feedback
+snapshot, and readback counters are cumulative over the complete replay, not
+only the measured window. The high alias and snapshot totals are expected from
+the repeated 240-draw feedback workload and do not indicate a resource leak.
+
+The reproducible gate is:
+
+```powershell
+python tools\mga2\benchmark_tutorial.py
+```
+
+It validates the executable's D3D12 4x/2x/full-rate profile, fast-forwards
+`new_game_runtime.pad` to presentation 30,900, includes the CIRCLE pulse at
+31,000, exits at 31,400, and summarizes 120 samples. Default acceptance is at
+least 59 displayed FPS, p95 no greater than 18 ms, no frame above 33.4 ms,
+maximum GPU time no greater than 16.68 ms, no more than four cumulative
+readbacks, and nonzero alias and ordered-snapshot counts. Displayed FPS
+measures host presentations, not unique game-state updates; the correct target
+is full-speed 59.94 Hz emulation while leaving the title's native update
+cadence unchanged.
+
+GPU captures are queued and consumed on a later host presentation. In the
+bounded differential runs, a 50-request manifest emitted 49 files because the
+last queued request was not flushed before clean exit. Consecutive requested
+PSP presentation numbers can also select guest-VRAM snapshots while a GPU
+capture remains pending. Future byte comparisons should therefore use requests
+spaced by observed host-present cadence and compare aligned emitted sequences,
+not assume that every requested identifier names an immediately captured GPU
+frame.
+
+The small feedback-versus-fallback edge delta remained unchanged when using
+legacy/conservative snapshots, matching the CPU CLUT expansion formula, and
+running at native internal resolution. The expansion experiment was reverted.
+No sampling, palette, or snapshot defect was isolated; asynchronous displayed
+frame ordering in the capture path remains a possible explanation. Treat
+silhouette attachment, stable sequence behavior, and the quantitative sparse
+delta as the validation criteria rather than requiring byte identity between
+the fast and queue-stalling paths.
+
+## MGA2-F-017 - Save-based visuals pass while Arena remains below 60 FPS
+
+**Status:** Confirmed
+
+The two isolated Acid 2 slot `003` memory-stick fixtures were retested with the
+current D3D12 4x internal-resolution, 2x xBRZ, full-rate profile on the same
+Ryzen 7 9800X3D and GeForce RTX 5070. The completed-game fixture drives the
+Arena replay through the Vamp/Dead Cell introduction and into card gameplay.
+The post-tutorial fixture drives the Stage 01 aircraft briefing.
+
+Each performance sample contains 120 actual host display flips and includes a
+known replay presentation:
+
+| Route | Sample includes | Displayed FPS | Average | p95 | Maximum | Frontend average | Backend average | GPU average / maximum |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| Vamp/Dead Cell introduction | 28,000 | 48.45 | 20.64 ms | 38.19 ms | 63.83 ms | 19.76 ms | 0.89 ms | 5.57 / 11.62 ms |
+| Arena card gameplay | 38,000 | 53.48 | 18.70 ms | 32.54 ms | 65.48 ms | 17.08 ms | 1.63 ms | 11.97 / 26.46 ms |
+| Stage 01 aircraft briefing | 80,000 | 59.79 | 16.73 ms | 17.07 ms | 52.52 ms | 16.35 ms | 0.37 ms | 0.40 / 0.82 ms |
+
+Stage 01 has one 52.52 ms frontend spike at presentation 79,905 immediately
+after the fast-forward transition; the other 119 samples are at or below
+17.47 ms. Its sustained cadence therefore passes, although the isolated spike
+still fails the strict 33.4 ms maximum-frame gate.
+
+The Arena results are not a recurrence of the framebuffer-readback defect.
+Both Arena runs perform only two cumulative readbacks. The Dead Cell replay
+uses 172,800 framebuffer aliases and 130,320 ordered feedback snapshots; the
+longer Arena gameplay replay uses 474,000 aliases and 357,475 snapshots. The
+feedback route is active and no texture fallback occurs.
+
+Frame timing alternates between expensive new game frames and short repeated
+presentations. In the Dead Cell window, 61 of 120 samples exceed 33.4 ms and
+the expensive frames are frontend-bound while GPU work remains below budget.
+Disabling vblank pacing raises throughput only to 50.57 FPS, with an 18.94 ms
+frontend average and 11.75 ms maximum GPU time. This isolates a remaining
+guest/GE frontend throughput limit rather than presentation pacing, xBRZ,
+framebuffer readback, or GPU saturation.
+
+Arena gameplay has a different mix. Its paced window includes 58 GPU samples
+above 16.68 ms, while the unpaced run averages 73.55 FPS but retains 37.70 ms
+p95 and 26.32 ms maximum GPU work. The route has average throughput headroom
+but still contains both CPU and 4x full-rate GPU spikes. The fixed-quality
+60-FPS target is therefore not yet met for either Arena phase.
+
+Visual validation passes. A 50-frame GPU-backed Arena manifest spans
+presentations 27,920-45,100, including 16 closely spaced Vamp animation frames
+from 27,920 through 28,040. The model remains intact throughout: depth
+ownership is stable, the former moving triangular dark surfaces do not return,
+and the cartoon silhouette stays attached. The current presentation-28,000
+capture has a mean absolute channel error of 1.5426 against the deterministic
+480x272 software reference. A separate internal-resolution capture at
+1920x1088 confirms the same surface and silhouette behavior before
+downsampling.
+
+The Stage 01 manifest emits 49 of 50 requested frames because the final
+sentinel remains queued at bounded exit, matching the capture-harness behavior
+documented in MGA2-F-016. All substantive requests are present. The cabin,
+character models, portraits, text, and halftone dialogue panels remain stable
+through the briefing. Presentations 80,000, 100,000, and 120,000 have mean
+absolute channel errors of 3.2734, 3.4929, and 3.5264 against the software
+reference. At 130,000 the current replay has advanced to the next dialogue
+state, so that frame is not a valid pixel differential; it shows no rendering
+fault.
+
+This save-based pass expands the visual confidence of the CLUT16 and stencil
+changes but also narrows the remaining performance work. The tutorial
+feedback/readback bottleneck is fixed; the Dead Cell cutscene now needs
+guest/GE frontend profiling, and Arena gameplay additionally needs 4x
+full-rate GPU spike analysis.
