@@ -228,6 +228,38 @@ ranked investigations below (native hotspot profile, per-draw CPU attribution)
 are next. Indexed capture was deliberately not started: the GPU vertex cost it
 targets is no longer the bottleneck.
 
+### 7. Native sampling result: texture hashing and per-iteration `getenv`
+
+The section-1 IP sampler is now in the runtime (`SR_SAMPLE_START=<present>`,
+`SR_SAMPLE_WINDOW=<presents>`, `SR_SAMPLE_FILE=<path>`; helper thread
+suspends the main thread, copies only RIP, resumes). The executable now links
+with `/MAP` (link-only change); out-of-executable samples are classified by
+module in `<file>.modules.txt`. A paced gameplay window showed:
+
+- about 18% of all samples (about 25% of in-executable time) in
+  `texture_content_hash` and the CLUT hash in `ged3d12_texture_key_build`,
+  because textures up to 64 KiB and the 2 KiB CLUT were hashed with byte-wise
+  FNV on every draw. Replaced by a four-lane 64-bit-word hash
+  (`ged3d12_hash64`); texture hash share fell to about 1%.
+- about 45-55% of main-thread samples inside CRT `getenv`: the scheduler loop,
+  HLE calls, and GE ops queried the environment on every iteration. A cached
+  `getenv` for string literals (`sr_env.h`) removes it.
+- `project_cvtx` and the acceptance block decoded six viewport floats per
+  vertex; they now share a viewport/offset cache.
+
+Presented frames 37,950, 38,000 and 38,200 remain byte-identical to the
+earlier build. No generated translation unit was rebuilt.
+
+| Run (4x/2x/full-rate, paced) | Dead Cell FPS / p95 | Gameplay FPS / p95 | Gameplay max GPU |
+|---|---:|---:|---:|
+| Before section 6 | not run | 51.87 / 33.88 ms | 22.39 ms |
+| After section 6 | 59.94 / 16.71 ms | 56.39 / 31.40 ms | 10.98 ms |
+| After section 7, runs 1-3 | 59.94 / 16.8-17.6 ms | 59.94 / 16.8-17.6 ms | about 10.4 ms |
+
+Both Arena windows passed all gates in three consecutive paced runs, and the
+tutorial benchmark passes (60.42 FPS, 17.33 ms p95). Indexed capture was not
+implemented: with the CPU gates met it has no demonstrated benefit.
+
 ## Experiments rejected or superseded
 
 ### Per-vertex cached raster projection

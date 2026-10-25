@@ -259,6 +259,9 @@ target_compile_definitions(mga2_driver PRIVATE
 if(CMAKE_C_SIMULATE_ID STREQUAL "MSVC")
   target_compile_options(mga2_driver PRIVATE /clang:-Wno-macro-redefined)
 endif()
+if(CMAKE_C_SIMULATE_ID STREQUAL "MSVC")
+  target_link_options(mga2_driver PRIVATE "/MAP:$<TARGET_FILE_DIR:mga2_driver>/mga2.map")
+endif()
 target_link_libraries(mga2_driver PRIVATE
   mga2_game mga2_at3 mga2_savedata_crypto
   mfplat mfuuid gdi32 user32 dinput8 dxguid ole32 winmm xaudio2 bcrypt)
