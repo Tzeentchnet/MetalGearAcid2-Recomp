@@ -305,6 +305,54 @@ tests and was not attempted because the GPU gate already passes (about 10.4 ms).
   generated code or the interpreter) and the Stage 01 route (no change touches
   its paths beyond the shared GE/D3D12 code exercised above).
 
+### 9. Draw merging, capture subphases, and GE overlap trace
+
+**Draw merging.** `record_vertex_batches` now draws adjacent direct-path batches
+as one call when the list, primitive, perspective, color/depth handles,
+pipeline key, shader constants and texture binding are identical, the vertex
+ranges are contiguous, the batch is not indexed, and neither the texture nor
+the CLUT is a framebuffer alias. Dirty bounds are unioned for the framebuffer
+mark. Manual (destination-aware) draws are never merged. Over the first 38,300
+presentations 193,164 of 765,000 direct batches (about 25%) were merged
+(`SR_D3D12_VERTEX_LOG=1` prints the running count). Presented frames remain
+byte-identical.
+
+**Per-draw CPU subphases (section 2).** The performance CSV gains
+`capture_ms`, `texture_capture_ms` and `state_capture_ms` (backend list/index
+capture; texture key, hash and lookup; pipeline key, framebuffer capture and
+shader-constant build), and `vertex_ms` includes them. On the busiest
+gameplay frame (profiling on): vertex decode/transform 4.3-4.8 ms, state
+capture 2.0 ms, texture capture 0.7 ms, backend capture 0.3 ms, primitive
+traversal 0.6 ms. Framebuffer capture is now memoized per capture generation
+(no change in output); the remainder of state capture is pipeline-key and
+shader-constant construction per draw, which would need register-dirty
+tracking to avoid.
+
+**Asynchronous GE (section 4) - trace only.** `SR_GETRACE=1` estimates how much
+GE list execution could overlap guest execution (time in guest/scheduler code
+between an unsynchronized chunk and the next `sceGeDrawSync`/`ListSync`). In a
+paced gameplay window the GE spent about 6.4 ms per sync interval against about
+10.9 ms of guest/idle time, so up to about 94% of the GE time sits behind slack
+that a worker could use. That slack includes scheduler idle time and the trace
+does not cover guest writes to memory referenced by in-flight lists, list
+stall/resume ordering, or interrupt ordering, all of which the doc requires
+before a design. No worker was implemented: the gates already pass without one,
+and the correctness hazards are not yet measured.
+
+**Native versus interpreted.** `SR_DISABLE_NATIVE_MODULES=*` at presentation
+38,000 renders the same scene (3D geometry, HUD, card UI) as the native build;
+the frames are not byte-identical because the slower interpreted run diverges
+in pad-script timing (different highlighted card). A byte comparison would need
+an input-independent capture point.
+
+**Not implemented.** Fixed-function blending into 16-bit framebuffers (62% of
+manual draws) needs quantization-exact differential tests; the GPU gate
+already passes with about 10.4 ms maximum.
+
+Final matrix: three more paced runs of both windows passed 2/3; run 3 had a
+sustained stretch of 33.4 ms frames in gameplay (58.0 FPS) at an unchanged
+workload, so the margin over the vblank interval is still thin on heavy frames.
+
 ## Experiments rejected or superseded
 
 ### Per-vertex cached raster projection
