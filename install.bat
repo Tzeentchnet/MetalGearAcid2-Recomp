@@ -117,13 +117,13 @@ goto :exit
 :runtime_ready
 if "%SOFTWARE_ONLY%"=="1" goto :toolkit_ready
 if exist "%TOOLKIT_PATH%\src\rt\texture_scaler.cpp" goto :texture_scaler_ready
-echo ERROR: Hardware rendering requires psp-recomp commit 138c2b8 or newer.
+echo ERROR: Hardware rendering requires psp-recomp commit 4b65b2c or newer.
 echo Missing: %TOOLKIT_PATH%\src\rt\texture_scaler.cpp
 goto :exit
 
 :texture_scaler_ready
 if exist "%TOOLKIT_PATH%\third_party\xbrz\xbrz.cpp" goto :toolkit_ready
-echo ERROR: Hardware rendering requires psp-recomp commit 138c2b8 or newer.
+echo ERROR: Hardware rendering requires psp-recomp commit 4b65b2c or newer.
 echo Missing: %TOOLKIT_PATH%\third_party\xbrz\xbrz.cpp
 goto :exit
 

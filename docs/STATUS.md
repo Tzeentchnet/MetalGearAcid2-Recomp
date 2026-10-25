@@ -36,6 +36,7 @@
 | Combined graphics build | Pass | One executable contains D3D12, Vulkan, and software; pinned SDL3 DLL is deployed |
 | Graphics launcher | Pass | Renderer, 1x-8x internal resolution, 1x-5x xBRZ, and D3D12 shading settings persist |
 | D3D12 high resolution | Pass | 8x (3840x2176), 2x xBRZ, full-rate shading reaches Arena presentation 45000 |
+| D3D12 framebuffer feedback | Pass | Presentations 27996-28006 match forced-safe reference captures without the stale tutorial silhouette |
 | Vulkan hardware backend | Pass | 2x xBRZ reaches Arena presentation 45000 on the native-resolution GE target |
 | Software graphics baseline | Pass | Software-only preset and GDI presenter reach presentation 120 |
 | Fullscreen toggle | Pass | F11 expands and restores both SDL3 hardware windows without device loss |

@@ -357,3 +357,29 @@ D3D12 is the high-resolution GE path: scaled color/depth targets, feedback,
 copies, and presentation all follow the 1x-8x setting. Vulkan currently
 presents to an arbitrary high-resolution swapchain and supports xBRZ texture
 uploads, but its offscreen GE color/depth target remains native 512x272.
+
+## MGA2-F-014 - D3D12 fallback textures synchronize GPU-newer framebuffers
+
+**Status:** Confirmed
+
+The tutorial scene alternates two 512-stride 5551 framebuffers at
+`0x04000000` and `0x04044000`. Each rendered frame includes 240 sprite draws
+that reinterpret the active 16-bit framebuffer as a 512x512 indexed texture.
+That format mismatch correctly rejects the direct framebuffer alias, but the
+D3D12 fallback texture path previously hashed and decoded the guest-VRAM mirror
+without first materializing the newer GPU target. One stale mirror retained a
+uniform dark character silhouette, so the artifact appeared and disappeared
+as the displayed framebuffer changed.
+
+A deterministic adjacent capture isolated the switch between presentations
+28002 and 28003. Forced framebuffer-safe readback removed the silhouette. The
+shared runtime now performs the normal watched VRAM read before hashing or
+decoding a fallback texture, preserving direct aliases while synchronizing only
+overlapping GPU-newer targets.
+
+Without diagnostic safe mode, all 11 fixed captures from presentations
+27996-28006 are byte-for-byte identical to the safe-readback control. The
+targeted path required 2,245 readbacks over the replay instead of the control's
+55,997. Graphics configuration, texture-scaler, and D3D12 vertex regression
+tests also pass. The fixed D3D12 build also reaches presentation 45000 through
+the authentic late-game Arena route without a renderer fault or host error.

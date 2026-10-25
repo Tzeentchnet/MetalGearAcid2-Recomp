@@ -75,7 +75,7 @@ keys are `renderer`, `internal_resolution`, `texture_scale`, and
 - Visual Studio 2022 Build Tools with clang-cl and a Windows SDK
 - Vulkan SDK when building the default Vulkan backend. A standard
   `C:\VulkanSDK\<version>` install is detected automatically.
-- `psp-recomp` commit `138c2b8` or newer at `D:\Github\psp-recomp`, or pass
+- `psp-recomp` commit `4b65b2c` or newer at `D:\Github\psp-recomp`, or pass
   another `PSP_RECOMP_DIR` to CMake and `--toolkit` to the generator
 
 The default preset downloads the pinned SDL3 3.2.20 VC development package
