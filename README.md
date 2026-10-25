@@ -75,7 +75,7 @@ keys are `renderer`, `internal_resolution`, `texture_scale`, and
 - Visual Studio 2022 Build Tools with clang-cl and a Windows SDK
 - Vulkan SDK when building the default Vulkan backend. A standard
   `C:\VulkanSDK\<version>` install is detected automatically.
-- `psp-recomp` commit `4b65b2c` or newer at `D:\Github\psp-recomp`, or pass
+- `psp-recomp` commit `b84b880` or newer at `D:\Github\psp-recomp`, or pass
   another `PSP_RECOMP_DIR` to CMake and `--toolkit` to the generator
 
 The default preset downloads the pinned SDL3 3.2.20 VC development package
@@ -184,9 +184,13 @@ out\build\clang-cl\mga2.exe --boot `
   build\mga2\gen\mga2_image.bin 08804000 08804128 none --gui
 ```
 
-The first windowed run opens graphics and controller setup. Reopen both
-dialogs later with:
+The first windowed run opens graphics and controller setup. Save the graphics
+settings, then select **Play Game** in the controller window to save the
+bindings and start Metal Gear Acid 2. Reopen both dialogs later with:
 
 ```powershell
 out\build\clang-cl\mga2.exe --configure
 ```
+
+The configuration launcher starts the game after **Play Game** is selected;
+the title-bar close button exits without launching.

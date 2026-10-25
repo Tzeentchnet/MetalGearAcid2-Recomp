@@ -22,7 +22,7 @@ if(MGA2_ENABLE_D3D12 OR MGA2_ENABLE_VULKAN)
   if(NOT EXISTS "${PSP_RECOMP_DIR}/src/rt/texture_scaler.cpp" OR
      NOT EXISTS "${PSP_RECOMP_DIR}/third_party/xbrz/xbrz.cpp")
     message(FATAL_ERROR
-      "Hardware rendering requires psp-recomp commit 4b65b2c or newer")
+      "Hardware rendering requires psp-recomp commit b84b880 or newer")
   endif()
   find_package(SDL3 CONFIG QUIET COMPONENTS SDL3-shared)
   if(NOT SDL3_FOUND)
@@ -237,6 +237,9 @@ target_compile_definitions(mga2_driver PRIVATE
   SR_EXPECTED_ISO_SHA1="87cebe80a93c4231bdbab26ad630c6d8e2fddab5"
   SR_BOOT_ARG="disc0:/PSP_GAME/SYSDIR/EBOOT.BIN"
   SR_BOOT_NEXT_UID=0x114u
+  SR_CONFIG_BOOT_IMAGE="mga2_image.bin"
+  SR_CONFIG_BOOT_BASE=0x08804000u
+  SR_CONFIG_BOOT_ENTRY=0x08804128u
   SR_MODULE_START_UID=0x113u
   SR_MODULE_START_PRIORITY=0x20u
   SR_MODULE_START_STACK_SIZE=0x40000u
@@ -266,6 +269,9 @@ if(MGA2_ENABLE_D3D12 OR MGA2_ENABLE_VULKAN)
 endif()
 set_target_properties(mga2_driver PROPERTIES OUTPUT_NAME mga2)
 add_custom_command(TARGET mga2_driver POST_BUILD
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different
+          "${MGA2_GEN_DIR}/mga2_image.bin"
+          "$<TARGET_FILE_DIR:mga2_driver>/mga2_image.bin"
   COMMAND ${CMAKE_COMMAND} -E copy_directory
           "${PSP_RECOMP_DIR}/assets"
           "$<TARGET_FILE_DIR:mga2_driver>/assets"
