@@ -262,6 +262,17 @@ reference indirection, triangle-list capture, and dirty-union feedback:
 | Maximum feedback refreshes / reuses | 181 / 59 |
 | Maximum feedback copy area | 16,030,000 physical pixels |
 
+The acceptance gaps are better expressed from the measured distribution than
+by adding unrelated maxima:
+
+| Gate comparison | Measured | Target | Required improvement |
+|---|---:|---:|---:|
+| Average frame time implied by 33.61 FPS | 29.75 ms | 16.95 ms for 59 FPS | 12.80 ms |
+| Frame-time p95 | 34.07 ms | 18.00 ms | 16.07 ms |
+| Maximum frame | 37.41 ms | 33.40 ms | 4.01 ms |
+| Average aligned GPU time | 18.20 ms | 16.68 ms | 1.52 ms |
+| Maximum aligned GPU time | 22.16 ms | 16.68 ms | 5.48 ms |
+
 This sample contains more expensive guest frames than the preceding `/O2`
 sample, so its 33.61 aggregate FPS is not evidence that the small vertex
 indirection change regressed by 13 FPS. On matched 39,972-index frames,
@@ -269,18 +280,141 @@ primitive assembly is generally about 0.2-0.3 ms faster and decode time is
 unchanged. The important conclusion is that the change is correct but far too
 small.
 
-Maxima above occur on different host flips and must not be added as if they
-were one frame. Representative expensive frames remain around 30 ms frontend
-time plus 2.7-3.5 ms backend recording, while aligned GPU work remains around
-18-22 ms.
+The 16.94 ms native maximum occurs on the same captured host flip as the
+37.41 ms maximum frame, so the native outlier is real. The primitive,
+decode/transform, and synchronization maxima occur together on another flip,
+and the GPU maximum occurs on a third. These maxima still must not be added as
+if they were one frame. Representative expensive frames remain around 30 ms
+frontend time plus 2.7-3.5 ms backend recording, while aligned GPU work
+remains around 18-22 ms.
 
 ## Ranked next investigations
 
-### 1. Preserve indexing through the PC-native D3D12 capture boundary
+### 1. Rank generated native guest hotspots
 
-This is the highest-confidence frontend opportunity. The GE now transforms
-23,132 unique source vertices but expands them to as many as 118,950
-non-indexed backend vertices.
+Generated native guest execution averages approximately 10.3 ms, reaches
+roughly 12.5 ms at p95 in the captured gameplay CSV, and peaks at 16.94 ms.
+Interpreter fallback remains only about 0.2-0.4 ms. Native profiling is now the
+first investigation because it is cheaper and more discriminating than an
+architectural geometry or threading change.
+
+System-wide WPR CPU sampling could not be enabled in the current environment
+because the process lacks the required performance-profile policy. Use one or
+more of:
+
+- a bounded internal sampling thread that records main-thread instruction
+  pointers into preallocated storage;
+- bounded generated-function entry counters for exact call counts; or
+- LLVM instrumentation/PGO data used first for ranking, not immediately as a
+  shipped profile.
+
+The guest fibers all execute on the main host thread. A diagnostic sampler
+using `SuspendThread` must:
+
+- pair every successful suspend with a resume;
+- copy only the instruction pointer while the thread is suspended;
+- defer symbolization, allocation, and file output until after resume;
+- filter or classify samples outside generated guest address ranges; and
+- remain strictly bounded to the presentation-38,000 window.
+
+Instruction-pointer samples provide statistical residency, not exact call
+counts or exact self time. Collect call counts separately, then inspect the
+assembly of only the highest-ranked generated functions. Also compare a
+matched diagnostic run with runtime profiling disabled or compiled out so the
+measurement overhead itself is bounded.
+
+Current code inspection rules out several blanket explanations:
+
+- used integer guest registers are already held in host locals inside each
+  generated function and synchronized around calls;
+- normal guest memory accesses already use an inline masked address and direct
+  base-pointer addition, with range and watched-VRAM checks rather than a page
+  table;
+- direct guest calls become native calls and `jr $ra` becomes a native return,
+  while computed transfers still use dispatch-table lookup; and
+- scheduler checks remain at function entries and loop backedges.
+
+The profile should therefore test, rather than assume, idle polling loops,
+computed-transfer frequency, watched-memory checks, excessive function
+boundaries, and inefficient scalar or VFPU floating-point code. Apply only
+the structural change demonstrated by the hottest functions.
+
+### 2. Attribute per-draw CPU and GPU work
+
+Do this before choosing indexed capture, texture-cache changes, draw merging,
+or a GE worker.
+
+#### CPU primitive and capture attribution
+
+The 1,427-draw maximum is the total of approximately 801 transform draws and
+626 through-mode draws. It is not 801 draws being split into 1,427 backend
+batches; the backend receives approximately one batch per GE draw.
+
+Across the captured frame rows, primitive time correlates strongly with both
+draw count and transformed-vertex count. Those workload counters also move
+together, so a frame-level fit cannot distinguish fixed per-draw cost from
+per-vertex clipping, projection, and emission. Add bounded subphase timing and
+counters for:
+
+- vertex/index lookup, decode, skinning, transform, and lighting/texgen;
+- primitive traversal, acceptance, clipping, projection, and ordering;
+- framebuffer and pipeline-state capture;
+- texture-key construction, quick/full hash bytes, hits, and verification;
+- shader-state capture;
+- draw and feedback bounds; and
+- backend vertex/index emission.
+
+Texture validation is a credible fixed-cost candidate. Textures at or below
+64 KiB are fully hashed even by the quick-content path, larger textures are
+sampled, and the first verification in a capture generation performs a full
+hash. The complete run recorded approximately 1.48 million texture lookups,
+1.476 million hits, and only 639 misses. A high hit rate does not make those
+pre-hit hashes free.
+
+#### GPU span and snapshot attribution
+
+The measured adapter is an NVIDIA GeForce RTX 5070, not an integrated GPU.
+At 4x PSP resolution, the remaining 18-22 ms therefore warrants explicit
+draw, copy, barrier, and pixel-work attribution.
+
+Compare the existing whole-frame timestamp span with the sum of timestamp
+pairs around:
+
+- direct fixed-function draws;
+- manual destination-aware draws;
+- destination color and depth snapshots;
+- feedback transitions and copies;
+- texture sampling and framebuffer-CLUT reconstruction;
+- depth/stencil destination reads; and
+- presentation.
+
+Partial feedback reduced copied pixels by 97.9% and improved the worst GPU
+sample by about 3.25 ms, making fixed refresh cost a credible hypothesis but
+not yet proving that the 181 feedback refreshes dominate. Across the complete
+run, the backend recorded approximately 1.18 million manual destination
+snapshots versus 285,000 feedback snapshots. Add aligned per-frame counters
+before comparing those paths, because the cumulative totals include startup
+and other scenes.
+
+Framebuffer textures sourced from a non-active target already bind that target
+directly. Do not duplicate that optimization. Instead, classify why each
+manual draw misses the fixed-function path: stencil behavior, logic operation,
+RGB write masks, framebuffer format, dithering, fixed-color factors, or another
+destination-dependent operation. If unsupported blend cases dominate, test
+expanded fixed-function or dual-source blending. If exact same-target
+read/modify/write dominates and hardware capabilities permit it, evaluate a
+rasterizer-ordered UAV path. Both require differential output tests and must
+remain fallbacks, not assumptions.
+
+xBRZ is unlikely to explain the measured steady-state spikes: the full run
+performed only 639 texture uploads, and backend texture preparation peaks near
+0.003 ms in the current window.
+
+### 3. Preserve indexing through the PC-native D3D12 capture boundary
+
+This remains the highest-confidence frontend implementation candidate after
+the attribution above. The GE now transforms 23,132 unique source vertices but
+expands them to as many as 118,950 non-indexed backend vertices.
 
 A proper implementation should:
 
@@ -300,13 +434,23 @@ A proper implementation should:
 
 Do not begin by changing the shader or reducing quality. The current vertex
 shader already consumes `SV_VertexID`, which should remain compatible with an
-indexed draw after the D3D12 buffer and batch metadata are wired correctly.
+indexed draw because `DrawIndexedInstanced` supplies the resolved index value.
+The index format should be selected from the projected table size, using
+`DXGI_FORMAT_R16_UINT` only when all referenced vertices fit.
 Do not partition a draw into all-unclipped followed by all-clipped triangles:
 that changes primitive order when the two kinds are interleaved. Keep one
 ordered index stream, or flush mixed indexed/expanded segments in source order.
 Likewise, adding HLSL `nointerpolation` alone does not prove PSP last-vertex
 provoking-color equivalence. The current backend explicitly copies the third
 vertex color to the complete flat-shaded triangle.
+
+For an unclipped flat-shaded triangle, a flat pixel-shader variant plus cyclic
+rotation from `(a,b,c)` to `(c,a,b)` can represent PSP last-vertex color while
+preserving winding. Clipping may remove that original provoking vertex or
+produce multiple triangles, so every emitted triangle must still receive the
+original primitive color. Retain duplication or an expanded fallback for
+those cases until Gouraud, flat, and clipped differential tests prove exact
+behavior.
 
 Evaluate this change on matched expensive frames. In addition to output hashes
 and geometry counters, measure primitive assembly, backend recording and
@@ -325,73 +469,54 @@ checks for unique vertices; it is not a measurement of packed-format
 conversion alone. Indexed capture therefore has no defensible 6-8 ms expected
 saving until its subphases are measured.
 
-### 2. Add a low-overhead native guest hotspot profile
+### 4. Evaluate asynchronous GE execution only after tracing safe overlap
 
-Generated native guest execution still reaches roughly 11-17 ms on expensive
-gameplay frames. Interpreter fallback is only about 0.2-0.4 ms.
+The current list manager runs synchronously on the guest host thread. A worker
+could overlap GE decode, transform, and assembly with generated guest work, but
+a raw command ring is insufficient. Lists stall and resume, raise callbacks,
+and reference vertex, index, texture, CLUT, and framebuffer memory that the
+guest may subsequently modify.
 
-System-wide WPR CPU sampling could not be enabled in the current environment
-because the process lacks the required performance-profile policy. The next
-profile should therefore use one of:
+Before designing a worker, trace:
 
-- an internal sampling thread that records native instruction pointers and
-  symbolizes them against generated functions;
-- bounded generated-function instrumentation in a diagnostic build; or
-- LLVM instrumentation/PGO data used first for ranking, not immediately as a
-  shipped profile.
+- list enqueue, first execution, stall, resume, completion, and required sync;
+- time between enqueue and `sceGeListSync`, `sceGeDrawSync`, or another
+  observable dependency;
+- guest writes to ranges referenced by in-flight lists;
+- callback and interrupt ordering; and
+- the amount of GE work that could actually overlap native execution.
 
-The guest fibers all execute on the main host thread. A diagnostic sampler that
-uses `SuspendThread` must preallocate its storage, guarantee that every
-successful suspend is paired with a resume, and remain strictly bounded to the
-benchmark window. It yields statistical sample counts, not exact function call
-counts. Collect call counts separately with bounded entry instrumentation; do
-not report sampled instruction pointers as exact exclusive timings.
+The current D3D12 command recording occurs during presentation, not GE list
+processing. Moving the GE frontend alone therefore does not automatically
+overlap the 2.7-3.5 ms backend phase. Moving command recording too would also
+require thread-safe resource-state, descriptor, upload, and presentation
+handoff.
 
-The objective is a ranked list of generated guest functions with self time and
-call count during the presentation-38,000 window. Only then should a PSP
-subsystem be replaced with PC-native code. Start with targeted changes in the
-highest-ranked functions, such as removing redundant state loads, bounds
-checks, or repeated calculations, and measure each change against the same
-gameplay window. Instrumentation and PGO are ranking tools first, not presumed
-runtime fixes.
-
-### 3. Attribute the remaining 4x GPU time
-
-Partial feedback removed most copy area but only about 3.25 ms of maximum GPU
-time. A bounded PIX or timestamp profile should separate:
-
-- direct fixed-function draws;
-- manual destination-snapshot draws;
-- feedback copy/barrier work;
-- texture sampling and CLUT reconstruction;
-- depth/stencil destination reads; and
-- overdraw from the 1,427-draw Arena frame.
-
-Full-rate shading and 4x internal resolution are fixed acceptance
-requirements. Variable-rate shading, lower resolution, and disabled feedback
-are diagnostics, not fixes.
-
-Do not globally sort or reorder draws while pursuing the dominant GPU
-category. PSP blending, destination reads, and framebuffer feedback make draw
-order observable.
+Proceed only if the trace shows substantial safe queue slack. A complete
+design needs explicit memory ownership or snapshots, double-buffered capture,
+ordered interrupts/readbacks/presentation, and the same floating-point mode on
+the worker thread. Validate all acceptance and regression routes; limiting the
+runtime to one title does not remove those observable hazards.
 
 ## Secondary investigations and correctness gates
 
-### Reduce D3D12 command-recording and upload overhead
+### Reduce D3D12 command-recording overhead
 
 The expensive gameplay frame reaches 1,427 backend batches and 118,950
 captured vertices. Measure CPU time spent recording commands, changing
-pipeline and descriptor state, and allocating or uploading geometry. If those
-costs are material:
+pipeline and descriptor state, and uploading geometry. The backend already has
+three fenced frame contexts, a 32 MiB per-frame upload ring, and fenced
+overflow slabs. If recording costs remain material:
 
 - reuse pipeline and descriptor state when the effective state is unchanged;
-- use a well-sized upload ring rather than creating avoidable transient
-  allocations; and
-- batch only adjacent operations whose ordering and complete render state are
-  identical.
+- batch only adjacent direct-path operations whose ordering and complete
+  render state are identical; and
+- specialize alpha/color-test-free direct draws only if GPU attribution shows
+  a discard or early-depth cost.
 
-Do not merge across observable feedback, synchronization, or render-state
-boundaries.
+Do not merge manual destination-aware draws merely because their keys match:
+each snapshot observes preceding output. Do not merge across feedback,
+synchronization, or render-state boundaries, and do not globally sort draws.
 
 ### Check CPU-GPU overlap and waits
 
@@ -399,8 +524,10 @@ Use the same bounded timeline to identify queue submissions, waits, and idle
 periods. Determine whether the CPU blocks on GPU completion, the GPU is starved
 while command recording runs, or synchronization serializes otherwise
 independent work. Optimize only the wait or submission pattern demonstrated by
-the trace. Increasing queue depth blindly can add latency without improving
-throughput.
+the trace. Backend begin currently peaks near 0.15 ms and measured gameplay
+readbacks remain zero, so `sync_ms` does not by itself prove a frame-fence
+wait. Split watched-VRAM lookup, transfer, readback, and actual wait time.
+Increasing queue depth blindly can add latency without improving throughput.
 
 ### Validate partial-feedback visual equivalence
 
@@ -429,12 +556,19 @@ replacement so the solved spline workload remains a regression gate.
   useful diagnostics only.
 - Do not prioritize interpreter optimization while fallback remains about
   0.2-0.4 ms on expensive frames.
+- Do not reserve a flat 4 GiB guest mapping or enable strict-aliasing changes
+  before a hot generated function attributes time to address translation.
+- Do not implement a GE worker before enqueue-to-sync tracing demonstrates
+  substantial safe overlap.
 
-The practical optimization sequence is indexed D3D12 capture, generated-code
-hotspot ranking, GPU attribution, and then a targeted change to the measured
-dominant cost. After each candidate, rerun the fixed-quality acceptance cases
-and compare matched workload frames, frame percentiles, aligned GPU samples,
-and geometry/readback counters rather than headline FPS alone.
+The practical sequence is: close the clean Dead Cell gate; rank native guest
+hotspots and inspect only their assembly; add per-draw CPU and GPU attribution;
+apply the measured structural fix; then choose indexed capture, texture-cache
+work, or a destination-snapshot reduction from the evidence. Attempt a GE
+worker only if queue-slack tracing justifies it. After each candidate, rerun
+the fixed-quality acceptance cases and compare matched workload frames, frame
+percentiles, aligned GPU samples, and geometry/readback counters rather than
+headline FPS alone.
 
 ## Assessment of additional architectural proposals
 
@@ -451,12 +585,13 @@ actual Arena format mix.
 
 ### Draw merging, bindless resources, and alpha-test specialization
 
-The maximum 1,427 GE draws and 1,427 backend batches indicate approximately
-one captured batch per guest draw, but not how many adjacent batches have
-identical complete state. Current CPU draw recording averages 2.27 ms and
-peaks at 4.00 ms, so reducing redundant binds is measurable. Merge only
-adjacent direct-path batches with identical pipeline, framebuffer, texture,
-sampler, shader constants, and synchronization semantics.
+The maximum 1,427 GE draws comprise approximately 626 through-mode and 801
+transform draws, with approximately one captured backend batch per guest draw.
+This does not reveal how many adjacent batches have identical complete state.
+Current CPU draw recording averages 2.27 ms and peaks at 4.00 ms, so reducing
+redundant binds is measurable. Merge only adjacent direct-path batches with
+identical pipeline, framebuffer, texture, sampler, shader constants, and
+synchronization semantics.
 
 Manual draws cannot generally be merged even when their visible state keys
 match: each one snapshots the destination produced by preceding draws.
@@ -493,23 +628,6 @@ DAZ and FTZ are already enabled by `sr_configure_fpu()` during memory/runtime
 initialization. Guest fibers share that host thread and MXCSR state. Configure
 the same mode explicitly only if guest or GE work is later moved to another OS
 thread.
-
-### Asynchronous GE execution and synchronization
-
-The current GE list manager executes synchronously on the guest host thread.
-Moving it to a worker could overlap work, but a raw command ring is
-insufficient: lists can stall and resume, raise callbacks, and reference
-vertex, texture, CLUT, and framebuffer memory that the guest can subsequently
-modify. A worker design needs explicit ownership or snapshots for all referenced
-memory plus ordered interrupt, readback, and present handoff.
-
-The D3D12 backend already has three fenced frame contexts, a 32 MiB per-frame
-upload ring with fenced overflow slabs, and records destination/feedback copies
-and barriers on the direct command list. In the current gameplay sample,
-backend begin peaks at 0.15 ms and per-frame framebuffer readbacks remain zero.
-The 4.19 ms `sync_ms` maximum therefore does not by itself prove a GPU fence
-stall. Split it into watched-VRAM lookup, transfer, readback, and actual wait
-subphases before considering a GE worker or deeper queueing.
 
 ### Impact estimates
 
