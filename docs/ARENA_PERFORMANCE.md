@@ -339,15 +339,27 @@ stall/resume ordering, or interrupt ordering, all of which the doc requires
 before a design. No worker was implemented: the gates already pass without one,
 and the correctness hazards are not yet measured.
 
-**Native versus interpreted.** `SR_DISABLE_NATIVE_MODULES=*` at presentation
-38,000 renders the same scene (3D geometry, HUD, card UI) as the native build;
-the frames are not byte-identical because the slower interpreted run diverges
-in pad-script timing (different highlighted card). A byte comparison would need
-an input-independent capture point.
+**Native versus interpreted.** Without a pad script (so input timing cannot
+diverge), `SR_DISABLE_NATIVE_MODULES=*` and the native build produce
+byte-identical presented frames at presentations 2,000, 2,400, 8,000 and 8,400
+(the latter pair is a non-trivial 32-color image). With the Arena pad script the
+interpreted run diverges in input timing, so only visual equivalence applies there.
 
 **Not implemented.** Fixed-function blending into 16-bit framebuffers (62% of
-manual draws) needs quantization-exact differential tests; the GPU gate
-already passes with about 10.4 ms maximum.
+manual draws): the shader reads the 565/5551/4444 destination, blends in 8-bit,
+and re-quantizes with PSP rounding; fixed-function blending on the internal
+8888 target cannot reproduce that final quantization bit-exactly, so it is not a
+safe replacement, and the GPU gate already passes with about 10.4 ms maximum.
+
+**State memo.** The pipeline key and shader constants are pure functions of the
+GE state and captured texture binding, so `begin_primitive` reuses the previous
+result when the complete `GeState` (ignoring vertex/index pointers) and the
+texture binding are unchanged. `SR_D3D12_VERIFY_STATE_MEMO=1` rebuilds on every
+reuse and aborts on a mismatch; it ran clean over presentations 27,000-28,201,
+37,000-38,201 and 44,000-45,201. State capture on the busiest gameplay frame
+fell from about 2.0 ms to about 1.6 ms (profiling on). Three consecutive paced
+runs of both windows then passed, with gameplay maximum frame 16.69-16.81 ms
+(no missed vblanks) and p95 16.68 ms.
 
 Final matrix: three more paced runs of both windows passed 2/3; run 3 had a
 sustained stretch of 33.4 ms frames in gameplay (58.0 FPS) at an unchanged
