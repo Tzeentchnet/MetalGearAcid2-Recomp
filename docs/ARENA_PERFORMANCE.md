@@ -257,8 +257,53 @@ earlier build. No generated translation unit was rebuilt.
 | After section 7, runs 1-3 | 59.94 / 16.8-17.6 ms | 59.94 / 16.8-17.6 ms | about 10.4 ms |
 
 Both Arena windows passed all gates in three consecutive paced runs, and the
-tutorial benchmark passes (60.42 FPS, 17.33 ms p95). Indexed capture was not
-implemented: with the CPU gates met it has no demonstrated benefit.
+tutorial benchmark passes (60.42 FPS, 17.33 ms p95).
+
+### 8. Indexed triangle capture, attribution, and validation
+
+**Indexed capture (section 3 of the ranked list).** `GeBackend` has an optional
+`tri_indexed` hook. For unclipped Gouraud triangles whose vertices come from the
+indexed transform cache, `ge.c` records one projected vertex table plus an
+ordered 16-bit index list per run of such triangles; the D3D12 backend uploads
+the table and an index buffer and issues `DrawIndexedInstanced` (the vertex
+shader's `SV_VertexID` raw load works unchanged). Clipped triangles, flat
+shading, clear mode, non-cache vertices, tables above 65,535 vertices and
+`SR_RTRACE` keep the expanded path; the two kinds flush in submission order
+whenever the kind changes, and a declined backend call replays through
+`raster_tri`. `SR_D3D12_NO_INDEXED=1` disables it for differentials.
+
+- The expensive gameplay frame's backend vertices fall from 118,950 to 44,644.
+- Primitive-assembly time is essentially unchanged (mean 1.93 -> 1.68 ms, max
+  4.65 -> 5.03 ms), confirming the doc's warning that vertex expansion was only
+  a small part of that category. Gameplay p95 is now pinned at the 16.69 ms
+  vblank interval (previously 16.8-17.6 ms).
+- Three consecutive paced runs of both windows passed after the change.
+- New unit test `test_indexed_triangles` (valid list, out-of-range index,
+  partial triangle, merge isolation, index upload) passes.
+- Presented frames are byte-identical with indexed capture on and off.
+
+**Manual-draw attribution (section 2, GPU side).** `SR_D3D12_VERTEX_LOG=1` now
+prints why draws miss the fixed-function path. Cumulative over the first 38,300
+presentations (1,138,834 manual vs 773,551 direct draws): non-8888 framebuffer
+format with blending 62%, stencil state 31%, stencil-write plus source/dest
+alpha factors 3%, clear 1%, logic op / RGB mask / dither / equation 0%. A
+fixed-function path for blending into 16-bit framebuffers is therefore the
+largest remaining GPU opportunity; it needs quantization-exact differential
+tests and was not attempted because the GPU gate already passes (about 10.4 ms).
+
+**Validation completed on this branch.**
+
+- Legacy-versus-current feedback snapshots (`SR_D3D12_LEGACY_FEEDBACK_SNAPSHOTS`)
+  and destination snapshots (`SR_D3D12_LEGACY_DESTINATION_SNAPSHOTS`):
+  presented frames 27,950/28,000/28,200 (Dead Cell), 37,950/38,000/38,200
+  (gameplay) and 45,000/45,200 (later Arena route) are byte-identical.
+- Dead Cell passed three consecutive paced runs (59.94 FPS; p95 16.82, 17.21,
+  16.69 ms; max frame at most 17.75 ms).
+- Tutorial benchmark passes (60.44 FPS, 16.92 ms p95).
+- Python helper tests (8) and all five CTests pass.
+- Not repeated: native-versus-interpreted comparison (no change touches
+  generated code or the interpreter) and the Stage 01 route (no change touches
+  its paths beyond the shared GE/D3D12 code exercised above).
 
 ## Experiments rejected or superseded
 
