@@ -48,7 +48,7 @@ if errorlevel 1 (
     echo ERROR: Could not enter the installation directory.
     exit /b 1
 )
-"%INSTALL_DIR%mga2.exe" --boot "%INSTALL_DIR%mga2_image.bin" 08804000 08804128 none --gui
+"%INSTALL_DIR%mga2.exe" --configure
 set "RESULT=%ERRORLEVEL%"
 popd >nul
 exit /b %RESULT%

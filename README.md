@@ -107,7 +107,7 @@ installation, start the game from the project root with:
 play.bat
 ```
 
-The startup script uses the installed hardware launcher when available, then
+The startup script uses the installed hardware build when available, then
 falls back to the software-only installation or an existing developer build.
 The installed launcher records the verified ISO's original location and uses
 an isolated `memstick` directory inside the installation.
@@ -174,14 +174,14 @@ installation:
 play.bat "E:\Games\Metal Gear Acid 2 (USA).iso"
 ```
 
-The equivalent manual command for an unstaged developer build is:
+Normal startup opens the graphics and controller launcher before entering the
+game. The equivalent manual command for an unstaged developer build is:
 
 ```powershell
 $env:PSP_ISO = "$PWD\Metal Gear Acid 2 (USA).iso"
 $env:SR_MEMSTICK = "$PWD\memstick"
 $env:SR_MODULE_LOG = "1"
-out\build\clang-cl\mga2.exe --boot `
-  build\mga2\gen\mga2_image.bin 08804000 08804128 none --gui
+out\build\clang-cl\mga2.exe --configure
 ```
 
 The first windowed run opens graphics and controller setup. Save the graphics
