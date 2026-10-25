@@ -195,6 +195,39 @@ sample.
 one run does not prove that it solves native guest hotspots. It did not clear
 the expensive-frame or GPU gates.
 
+### 6. Destination-snapshot rectangles and redundant D3D12 state (branch `perf/arena-indexed-capture`)
+
+**Root cause:** every manual (destination-aware) draw copied the complete
+2048x1088 color target and complete depth target into the destination snapshot,
+about 1.18 million times over the run, even though the pixel shader only loads
+the destination at fragment positions inside the draw's vertex bounds.
+
+**Changes (runtime only, no generated-code rebuild):**
+
+- copy only the draw rectangle (plus one PSP pixel of margin) for both color
+  and depth; `SR_D3D12_LEGACY_DESTINATION_SNAPSHOTS=1` restores full copies for
+  differentials and is cleared by the benchmark harness;
+- skip `OMSetRenderTargets`/viewport when the color/depth pair is already bound;
+- skip `SetPipelineState`, texture/sampler descriptor tables, and scissor
+  updates when unchanged within one command-list generation
+  (`ged3d12_command_list_generation()`).
+
+**Measured (single paced runs, 4x/2x/full-rate):**
+
+| Case | Metric | Before | After |
+|---|---|---:|---:|
+| Gameplay | FPS | 51.87 | 56.39 |
+| Gameplay | p95 | 33.88 ms | 31.40 ms |
+| Gameplay | Maximum GPU | 22.39 ms | 10.98 ms |
+| Dead Cell | FPS / p95 | not re-run | 59.94 / 16.71 ms (passes) |
+
+The GPU gate now passes in both windows. Presented frames 37,950, 38,000 and
+38,200 are byte-identical between the new and legacy snapshot modes. The
+remaining gameplay gap is CPU (frontend/native guest, p95 31.4 ms), so the
+ranked investigations below (native hotspot profile, per-draw CPU attribution)
+are next. Indexed capture was deliberately not started: the GPU vertex cost it
+targets is no longer the bottleneck.
+
 ## Experiments rejected or superseded
 
 ### Per-vertex cached raster projection
