@@ -194,3 +194,24 @@ out\build\clang-cl\mga2.exe --configure
 
 The configuration launcher starts the game after **Play Game** is selected;
 the title-bar close button exits without launching.
+
+## Tutorial performance benchmark
+
+After building the combined renderer, run the deterministic opening-dialog
+benchmark with:
+
+```powershell
+python tools\mga2\benchmark_tutorial.py
+```
+
+The benchmark requires the D3D12 4x internal-resolution, 2x xBRZ, full-rate
+profile in the executable's `graphics.ini`. It fast-forwards the checked-in
+input replay to presentation 30,900, includes the CIRCLE pulse at presentation
+31,000, and validates a 120-flip steady-state window. The default gates require
+at least 59 displayed FPS, p95 at or below 18 ms, no frame above 33.4 ms, GPU
+time within one 59.94 Hz period, active framebuffer-feedback aliases, and no
+more than four cumulative startup/shutdown framebuffer readbacks.
+
+Logs, the performance CSV, and a machine-readable `summary.json` are written
+under `out\benchmarks`. Use `--iso`, `--executable`, or `--output` to override
+the default local paths.

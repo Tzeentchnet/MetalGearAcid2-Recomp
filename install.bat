@@ -115,15 +115,21 @@ echo ERROR: The psp-recomp checkout is incomplete: src\rt\recomp.h is missing.
 goto :exit
 
 :runtime_ready
+if exist "%TOOLKIT_PATH%\src\rt\display_state.c" goto :display_state_ready
+echo ERROR: Metal Gear Acid 2 requires psp-recomp commit 1d78cb1 or newer.
+echo Missing: %TOOLKIT_PATH%\src\rt\display_state.c
+goto :exit
+
+:display_state_ready
 if "%SOFTWARE_ONLY%"=="1" goto :toolkit_ready
 if exist "%TOOLKIT_PATH%\src\rt\texture_scaler.cpp" goto :texture_scaler_ready
-echo ERROR: Hardware rendering requires psp-recomp commit 4b65b2c or newer.
+echo ERROR: Hardware rendering requires psp-recomp commit 1d78cb1 or newer.
 echo Missing: %TOOLKIT_PATH%\src\rt\texture_scaler.cpp
 goto :exit
 
 :texture_scaler_ready
 if exist "%TOOLKIT_PATH%\third_party\xbrz\xbrz.cpp" goto :toolkit_ready
-echo ERROR: Hardware rendering requires psp-recomp commit 4b65b2c or newer.
+echo ERROR: Hardware rendering requires psp-recomp commit 1d78cb1 or newer.
 echo Missing: %TOOLKIT_PATH%\third_party\xbrz\xbrz.cpp
 goto :exit
 

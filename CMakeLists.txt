@@ -15,6 +15,11 @@ option(MGA2_ENABLE_INSTRUCTION_TRACE "Keep instruction trace hooks" OFF)
 if(NOT EXISTS "${PSP_RECOMP_DIR}/src/rt/recomp.h")
   message(FATAL_ERROR "PSP_RECOMP_DIR is not a psp-recomp checkout")
 endif()
+if(NOT EXISTS "${PSP_RECOMP_DIR}/src/rt/display_state.c" OR
+   NOT EXISTS "${PSP_RECOMP_DIR}/src/rt/display_state.h")
+  message(FATAL_ERROR
+    "Metal Gear Acid 2 requires psp-recomp commit 1d78cb1 or newer")
+endif()
 if(MGA2_ENABLE_D3D12 OR MGA2_ENABLE_VULKAN)
   if(NOT WIN32)
     message(FATAL_ERROR "The SDL3 hardware renderers currently require Windows")
@@ -22,7 +27,7 @@ if(MGA2_ENABLE_D3D12 OR MGA2_ENABLE_VULKAN)
   if(NOT EXISTS "${PSP_RECOMP_DIR}/src/rt/texture_scaler.cpp" OR
      NOT EXISTS "${PSP_RECOMP_DIR}/third_party/xbrz/xbrz.cpp")
     message(FATAL_ERROR
-      "Hardware rendering requires psp-recomp commit b84b880 or newer")
+      "Hardware rendering requires psp-recomp commit 1d78cb1 or newer")
   endif()
   find_package(SDL3 CONFIG QUIET COMPONENTS SDL3-shared)
   if(NOT SDL3_FOUND)
@@ -164,6 +169,7 @@ endif()
 
 set(MGA2_RUNTIME_SRCS
   ${RT}/recomp.c
+  ${RT}/display_state.c
   ${RT}/dispatch_table.c
   ${RT}/fpu_mode.c
   ${RT}/fps_counter.c
@@ -281,6 +287,13 @@ add_custom_command(TARGET mga2_driver POST_BUILD
 
 include(CTest)
 if(BUILD_TESTING)
+  add_executable(mga2_display_state_tests EXCLUDE_FROM_ALL
+    ${PSP_RECOMP_DIR}/tools/tests/display_state_test.c
+    ${RT}/display_state.c)
+  target_include_directories(mga2_display_state_tests PRIVATE "${RT}")
+  target_compile_options(mga2_display_state_tests PRIVATE ${MGA2_FP_FLAGS})
+  add_test(NAME mga2_display_state COMMAND mga2_display_state_tests)
+
   add_executable(mga2_graphics_config_tests EXCLUDE_FROM_ALL
     ${PSP_RECOMP_DIR}/tools/tests/graphics_config_test.c
     ${RT}/graphics_config.c
