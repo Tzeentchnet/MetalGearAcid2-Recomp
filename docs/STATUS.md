@@ -23,7 +23,9 @@
   FPS at D3D12 4x internal resolution, 2x xBRZ, and full-rate shading.
 - Save-based D3D12 validation keeps the Dead Cell and Stage 01 visuals intact.
   Stage 01 sustains 59.79 FPS apart from one transition spike; the Dead Cell
-  cutscene and Arena gameplay remain below the fixed-quality 60-FPS target.
+  spline bottleneck is removed in a diagnostic profile, but a clean acceptance
+  run is pending and Arena gameplay remains below the fixed-quality 60-FPS
+  target.
 
 ## Validation matrix
 
@@ -45,6 +47,7 @@
 | D3D12 framebuffer feedback | Pass | Presentations 27996-28006 match forced-safe reference captures without the stale tutorial silhouette |
 | D3D12 tutorial performance | Pass | Presentation-31000 CIRCLE stress window: 60.44 FPS, 16.76 ms p95, 17.42 ms maximum, 2 cumulative framebuffer readbacks |
 | D3D12 save-scene performance | Partial | Stage 01: 59.79 FPS and 17.07 ms p95; Dead Cell: 48.45 FPS and 38.19 ms p95; Arena gameplay: 53.48 FPS and 32.54 ms p95 |
+| Arena optimization profile | Partial | Dead Cell diagnostic: 59.51 FPS and 17.67 ms p95, but `SR_GEDUMP` violates the readback gate; gameplay `/O2`: 46.83 FPS, 34.16 ms p95, 22.90 ms maximum GPU |
 | D3D12 cutscene depth/stencil | Pass | Fifty current GPU captures plus a 1920x1088 presentation-28000 capture keep the Dead Cell model and silhouette intact across presentations 27920-28040 |
 | Vulkan hardware backend | Pass | 2x xBRZ reaches Arena presentation 45000 on the native-resolution GE target |
 | Software graphics baseline | Pass | Software-only preset and GDI presenter reach presentation 120 |
@@ -72,8 +75,10 @@ and ten exercised dynamic-module images are recompiled. Unconfigured plaintext
 PRXs and guarded runtime-modified functions retain strict interpreter fallback.
 Presentation-index differentials are exact in all three exercised gameplay
 lanes, and the fixed-quality D3D12 tutorial path sustains the 59.94 Hz display
-cadence. The save-based visual routes pass, but the Dead Cell guest/GE
-frontend workload and Arena 4x GPU spikes remain performance targets. Secure
-save creation/reload,
+cadence. The save-based visual routes pass. Reusing separable spline
+intermediates removes the measured Dead Cell frontend bottleneck, pending a
+clean acceptance run; ordinary transformed-geometry assembly, generated guest
+work, synchronization, and Arena 4x GPU spikes remain performance targets.
+Secure save creation/reload,
 longer gameplay, media behavior, automated PPSSPP hardware-frame comparison,
 and soak testing are still required; this is not yet full-game compatibility.

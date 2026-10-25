@@ -16,9 +16,11 @@ if(NOT EXISTS "${PSP_RECOMP_DIR}/src/rt/recomp.h")
   message(FATAL_ERROR "PSP_RECOMP_DIR is not a psp-recomp checkout")
 endif()
 if(NOT EXISTS "${PSP_RECOMP_DIR}/src/rt/display_state.c" OR
-   NOT EXISTS "${PSP_RECOMP_DIR}/src/rt/display_state.h")
+   NOT EXISTS "${PSP_RECOMP_DIR}/src/rt/display_state.h" OR
+   NOT EXISTS "${PSP_RECOMP_DIR}/src/rt/perf_stats.c" OR
+   NOT EXISTS "${PSP_RECOMP_DIR}/src/rt/perf_stats.h")
   message(FATAL_ERROR
-    "Metal Gear Acid 2 requires psp-recomp commit 1d78cb1 or newer")
+    "Metal Gear Acid 2 requires psp-recomp commit 3de8644 or newer")
 endif()
 if(MGA2_ENABLE_D3D12 OR MGA2_ENABLE_VULKAN)
   if(NOT WIN32)
@@ -27,7 +29,7 @@ if(MGA2_ENABLE_D3D12 OR MGA2_ENABLE_VULKAN)
   if(NOT EXISTS "${PSP_RECOMP_DIR}/src/rt/texture_scaler.cpp" OR
      NOT EXISTS "${PSP_RECOMP_DIR}/third_party/xbrz/xbrz.cpp")
     message(FATAL_ERROR
-      "Hardware rendering requires psp-recomp commit 1d78cb1 or newer")
+    "Hardware rendering requires psp-recomp commit 3de8644 or newer")
   endif()
   find_package(SDL3 CONFIG QUIET COMPONENTS SDL3-shared)
   if(NOT SDL3_FOUND)
@@ -125,10 +127,10 @@ target_compile_definitions(mga2_game PRIVATE
   "SR_ENABLE_INSTRUCTION_TRACE=$<BOOL:${MGA2_ENABLE_INSTRUCTION_TRACE}>")
 if(CMAKE_C_SIMULATE_ID STREQUAL "MSVC")
   target_compile_options(mga2_game PRIVATE /W3 ${MGA2_FP_FLAGS}
-    "$<$<CONFIG:Release>:/O1>")
+    "$<$<CONFIG:Release>:/O2>")
 else()
   target_compile_options(mga2_game PRIVATE -Wall -Wno-unused-label
-    ${MGA2_FP_FLAGS} "$<$<CONFIG:Release>:-O1>")
+    ${MGA2_FP_FLAGS} "$<$<CONFIG:Release>:-O2>")
 endif()
 
 set(RT "${PSP_RECOMP_DIR}/src/rt")
@@ -178,6 +180,7 @@ set(MGA2_RUNTIME_SRCS
   ${RT}/module.c
   ${RT}/vfpu_interp.c
   ${RT}/vfpu_asin.c
+  ${RT}/perf_stats.c
   ${RT}/hle.c
   ${RT}/memstick_state.c
   ${RT}/net.c
@@ -293,6 +296,13 @@ if(BUILD_TESTING)
   target_include_directories(mga2_display_state_tests PRIVATE "${RT}")
   target_compile_options(mga2_display_state_tests PRIVATE ${MGA2_FP_FLAGS})
   add_test(NAME mga2_display_state COMMAND mga2_display_state_tests)
+
+  add_executable(mga2_perf_stats_tests EXCLUDE_FROM_ALL
+    ${PSP_RECOMP_DIR}/tools/tests/perf_stats_test.c
+    ${RT}/perf_stats.c)
+  target_include_directories(mga2_perf_stats_tests PRIVATE "${RT}")
+  target_compile_options(mga2_perf_stats_tests PRIVATE ${MGA2_FP_FLAGS})
+  add_test(NAME mga2_perf_stats COMMAND mga2_perf_stats_tests)
 
   add_executable(mga2_graphics_config_tests EXCLUDE_FROM_ALL
     ${PSP_RECOMP_DIR}/tools/tests/graphics_config_test.c

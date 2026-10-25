@@ -652,3 +652,56 @@ changes but also narrows the remaining performance work. The tutorial
 feedback/readback bottleneck is fixed; the Dead Cell cutscene now needs
 guest/GE frontend profiling, and Arena gameplay additionally needs 4x
 full-rate GPU spike analysis.
+
+## MGA2-F-018 - Arena bottlenecks cross the guest, GE, and D3D12 boundaries
+
+**Status:** Confirmed, optimization in progress
+
+The dedicated Arena benchmark samples 120 actual host flips around
+presentations 28,000 and 38,000 after a 120-guest-presentation warm-up. Its
+exclusive, fiber-aware profiler separates generated native guest execution,
+interpreter fallback, HLE, scheduler, GE command processing, vertex work,
+framebuffer synchronization, backend stages, and delayed D3D12 GPU queries.
+This ruled out interpreter fallback as the primary cause and exposed different
+limits in the two Arena phases.
+
+The initial Dead Cell profile reached 50.86 FPS with 35.17 ms p95 and a
+59.60 ms maximum. Expensive frames issued about 590 spline draws, and spline
+tessellation alone reached 31.6 ms. The evaluator redundantly recomputed each
+vertical patch-column intermediate for every generated vertex. Reusing that
+separable intermediate per V row and U segment, retaining scratch storage, and
+generating normals only when lighting or texture state consumes them reduced
+the profiled window to 17.67 ms p95 at 59.51 FPS. Vertex work then averaged
+5.75 ms and peaked at 12.48 ms; patch evaluation and draw work peaked at
+6.03 ms and 3.06 ms. D3D12 vertex hashes remained identical, including
+`cb55d899048a60c2` at backend presentation 12,480. That diagnostic enabled
+`SR_GEDUMP=1` and therefore performed 118 readbacks, so a clean run is still
+required before the strict acceptance gate can be marked passed.
+
+Arena gameplay contains no patch workload. An expensive frame submits 39,972
+transformed indices across 801 draws. An index-generation cache reduces those
+to 23,132 unique transforms, while batched triangle capture removes repeated
+backend reserve/capture calls. The current profile still reaches approximately
+5.2 ms in decode/transform, 13.0 ms in primitive assembly, 14.2 ms in generated
+native execution, and 4.0 ms in framebuffer synchronization. These maxima can
+overlap differently across paced frames, but together explain why the CPU side
+still misses one 59.94 Hz period.
+
+Ordered framebuffer feedback was a separate GPU cost. The previous path copied
+the entire 2048x2048 physical snapshot for every refresh even when a draw
+sampled only a small PSP-space rectangle. The current path takes one full copy
+when the target changes, tracks subsequent dirty draw regions, and refreshes
+the bounding union of the requested source and accumulated dirt. On the
+expensive gameplay frame it preserves the original 181 refreshes and 59 safe
+reuses while reducing copied physical pixels from 759,169,024 to 16,030,000,
+a 97.9% reduction. Maximum GPU time improved from 24.47 ms to 21.22 ms in the
+paired `/O1` profile, but remains above the 16.68 ms gate.
+
+A release `/O2` generated-code experiment required one full rebuild of all 361
+generated translation units. The first paced gameplay run improved aggregate
+throughput from 34.99 to 46.83 displayed FPS, but its 34.16 ms p95, 34.76 ms
+maximum, and 22.90 ms maximum GPU time still failed. The changed host/guest
+frame mix makes aggregate FPS insufficient by itself; matched workload
+counters, percentiles, and aligned GPU queries remain the optimization
+criteria. Runtime-only changes continue to use incremental targeted builds so
+the generated corpus is not rebuilt unnecessarily.

@@ -75,7 +75,7 @@ keys are `renderer`, `internal_resolution`, `texture_scale`, and
 - Visual Studio 2022 Build Tools with clang-cl and a Windows SDK
 - Vulkan SDK when building the default Vulkan backend. A standard
   `C:\VulkanSDK\<version>` install is detected automatically.
-- `psp-recomp` commit `b84b880` or newer at `D:\Github\psp-recomp`, or pass
+- `psp-recomp` commit `3de8644` or newer at `D:\Github\psp-recomp`, or pass
   another `PSP_RECOMP_DIR` to CMake and `--toolkit` to the generator
 
 The default preset downloads the pinned SDL3 3.2.20 VC development package
@@ -158,6 +158,12 @@ cmake --preset clang-cl-software
 cmake --build --preset clang-cl-software --target mga2_driver
 ```
 
+Ninja builds are incremental. After changing a runtime source file, rerun the
+same targeted `cmake --build` command; do not regenerate game code or delete the
+build tree. Changes to generated-code compiler options necessarily rebuild all
+361 generated translation units, so batch those changes and measure the
+resulting executable before changing the build profile again.
+
 ## Run
 
 For normal startup after installation, double-click `play.bat` or run it from
@@ -215,3 +221,35 @@ more than four cumulative startup/shutdown framebuffer readbacks.
 Logs, the performance CSV, and a machine-readable `summary.json` are written
 under `out\benchmarks`. Use `--iso`, `--executable`, or `--output` to override
 the default local paths.
+
+## Arena performance benchmark
+
+The completed-save Arena route is the primary renderer and runtime stress
+test. Supply an isolated memory-stick root containing
+`PSP\SAVEDATA\ULUS10077003`; its `00000000.000` file must be exactly 48,800
+bytes. Then run:
+
+```powershell
+python tools\mga2\benchmark_arena.py `
+  --memstick build\mga2\arena-d3d12-shadow-fix\memstick
+```
+
+The default run validates two 120-host-flip windows: the Dead Cell
+introduction around presentation 28,000 and playable Arena card combat around
+presentation 38,000. Fast-forwarding stops 120 guest presentations before
+each measurement window so transition work is not mistaken for steady-state
+rendering. The fixed acceptance profile and gates are identical to the
+tutorial benchmark: D3D12 at 4x internal resolution, 2x xBRZ, full-rate
+shading, at least 59 displayed FPS, p95 no greater than 18 ms, no frame above
+33.4 ms, no GPU sample above 16.68 ms, at most four cumulative readbacks, and
+active framebuffer aliases and ordered feedback snapshots.
+
+Use `--case dead-cell` or `--case gameplay` while iterating. Add
+`--include-unpaced` only for a non-gating throughput diagnostic. Each case
+writes its command log, per-presentation `perf.csv`, and summary beneath a new
+directory in `out\benchmarks`; the parent `summary.json` records both cases
+and every failed gate.
+
+The current experiment history, rejected approaches, remaining bottlenecks,
+and ranked follow-up work are recorded in
+[`docs/ARENA_PERFORMANCE.md`](docs/ARENA_PERFORMANCE.md).

@@ -350,6 +350,13 @@ Shared benchmark support should record:
 - frontend, backend CPU, and GPU times; and
 - renderer coherence counters.
 
+The title implementation also showed that fast-forward should stop before the
+measured range. A configurable guest-presentation warm-up prevents one-time
+scheduler/audio transition work from being reported as steady scene cost.
+Delayed GPU queries must carry their source host-flip identifier so reports can
+realign them instead of assigning GPU work to the later row where the query
+became readable.
+
 Displayed FPS measures host presentations, not unique guest game-state
 updates. Tooling and reports should name those separately so performance work
 does not accidentally change a title's native update cadence.
@@ -368,6 +375,12 @@ Useful refinements include:
 - bytes transferred by readback;
 - fallback decode time and texel count; and
 - maximum live snapshot storage.
+
+Arena feedback profiling adds one more useful quantity: physical pixels copied
+into ordered snapshots. Snapshot count alone hid a 2048x2048 copy per refresh;
+tracking copied area verified a reduction from 759,169,024 to 16,030,000
+physical pixels on the expensive gameplay frame without losing its 59 safe
+snapshot reuses.
 
 High alias or snapshot counts are not inherently bad; for a feedback-heavy
 title they show that the GPU-resident route is active. Readback counts need
@@ -398,11 +411,27 @@ Structured performance samples should separately report:
 - HLE service time; and
 - graphics-backend preparation, submission, and GPU queries.
 
+The implemented split isolated two reusable optimization rules. First,
+separable spline and Bezier evaluators should compute patch-column
+intermediates once per axis segment rather than once per output vertex; exact
+geometry hashes can verify that reuse. Second, indexed transformed vertices
+should be cached within a draw before clipping and primitive assembly. In the
+Arena gameplay workload this reduces 39,972 submitted indices to 23,132 unique
+transforms, although primitive assembly and clipping remain separately
+measurable costs.
+
 The counters should align to each host display sample or include generation
 ranges that can be joined to it. Paired paced and `SR_NOVBPACE=1` runs should
 be a supported diagnostic mode: the difference distinguishes throughput
 limits from cadence/coalescing behavior without changing the production
 acceptance run.
+
+Generated-code optimization level is another build/runtime tradeoff. Changing
+it invalidates every generated translation unit, so benchmark one release
+profile at a time and keep runtime iteration incremental. A title-side `/O2`
+experiment improved aggregate paced throughput but did not clear p95 or GPU
+gates, demonstrating why compiler-profile changes must be judged with matched
+workload counters rather than FPS alone.
 
 ### 4.4 GPU capture requests need explicit completion semantics
 
