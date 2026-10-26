@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import replace
 import json
 from pathlib import Path
 import subprocess
@@ -90,6 +91,12 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         default="both",
     )
     parser.add_argument(
+        "--renderer",
+        choices=("d3d12", "vulkan"),
+        default="d3d12",
+        help="renderer used by the executable; Vulkan is diagnostic only",
+    )
+    parser.add_argument(
         "--include-unpaced",
         action="store_true",
         help="also run non-gating SR_NOVBPACE=1 diagnostic samples",
@@ -103,6 +110,24 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         ),
     )
     parser.add_argument("--window", type=int, default=DEFAULT_WINDOW)
+    parser.add_argument(
+        "--tail-presents",
+        type=int,
+        default=0,
+        help="continue this many presentations past each case exit bound",
+    )
+    parser.add_argument(
+        "--fortune-window",
+        type=int,
+        default=None,
+        help="sample window for Fortune (runtime maximum is 600)",
+    )
+    parser.add_argument(
+        "--fortune-extra-presents",
+        type=int,
+        default=0,
+        help="extend Fortune's diagnostic run without changing its start",
+    )
     parser.add_argument("--minimum-fps", type=float, default=59.0)
     parser.add_argument("--maximum-p95-ms", type=float, default=18.0)
     parser.add_argument("--maximum-frame-ms", type=float, default=33.4)
@@ -164,12 +189,16 @@ def main(argv: list[str]) -> int:
         iso = require_file(args.iso, "game ISO")
         pad_script = require_file(args.pad_script, "pad script")
         memstick = require_arena_save(args.memstick)
-        if args.window <= 0:
+        if args.window <= 0 or args.tail_presents < 0:
             raise ValueError("--window must be positive")
+        if args.fortune_window is not None and args.fortune_window <= 0:
+            raise ValueError("--fortune-window must be positive")
+        if args.fortune_extra_presents < 0:
+            raise ValueError("--fortune-extra-presents cannot be negative")
         fixed_profile = not args.allow_nonstandard_profile
         profile = read_graphics_profile(executable, required=None)
         expected = {
-            "renderer": "d3d12",
+            "renderer": args.renderer,
             "internal_resolution": "4",
             "texture_scale": "2",
             "d3d12_full_rate": "1",
@@ -179,7 +208,7 @@ def main(argv: list[str]) -> int:
         )
         if fixed_profile and not profile_matches:
             read_graphics_profile(executable)
-        fixed_profile = fixed_profile and profile_matches
+        fixed_profile = fixed_profile and profile_matches and args.renderer == "d3d12"
         output = (
             args.output.resolve()
             if args.output
@@ -199,9 +228,18 @@ def main(argv: list[str]) -> int:
         selected = select_cases(args.case)
         results: list[dict[str, object]] = []
         for case in selected:
+            case_window = args.window
+            case_tail = args.tail_presents
+            case_to_run = case
+            if case.name == "fortune":
+                case_window = args.fortune_window or args.window
+                case_to_run = replace(
+                    case,
+                    exit_after=case.exit_after + args.fortune_extra_presents,
+                )
             results.append(
                 run_benchmark_case(
-                    case=case,
+                    case=case_to_run,
                     executable=executable,
                     image=image,
                     iso=iso,
@@ -210,15 +248,17 @@ def main(argv: list[str]) -> int:
                     output=output / case.name,
                     profile=profile,
                     thresholds=thresholds,
-                    window=args.window,
+                    window=case_window,
                     timeout=args.timeout,
+                    renderer=args.renderer,
+                    tail_presents=case_tail,
                     validate_result=fixed_profile,
                 )
             )
             if args.include_unpaced:
                 results.append(
                     run_benchmark_case(
-                        case=case,
+                        case=case_to_run,
                         executable=executable,
                         image=image,
                         iso=iso,
@@ -227,8 +267,10 @@ def main(argv: list[str]) -> int:
                         output=output / f"{case.name}-unpaced",
                         profile=profile,
                         thresholds=thresholds,
-                        window=args.window,
+                        window=case_window,
                         timeout=args.timeout,
+                        renderer=args.renderer,
+                        tail_presents=case_tail,
                         validate_result=False,
                         unpaced=True,
                     )

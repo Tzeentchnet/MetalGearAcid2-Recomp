@@ -240,7 +240,13 @@ add_executable(mga2_driver
   ${MGA2_RUNTIME_SRCS})
 target_include_directories(mga2_driver PRIVATE "${RT}")
 target_compile_features(mga2_driver PRIVATE cxx_std_17)
-target_compile_options(mga2_driver PRIVATE ${MGA2_FP_FLAGS})
+if(CMAKE_C_SIMULATE_ID STREQUAL "MSVC")
+  target_compile_options(mga2_driver PRIVATE ${MGA2_FP_FLAGS}
+    "$<$<CONFIG:Release>:/O2>")
+else()
+  target_compile_options(mga2_driver PRIVATE ${MGA2_FP_FLAGS}
+    "$<$<CONFIG:Release>:-O2>")
+endif()
 target_compile_definitions(mga2_driver PRIVATE
   _CRT_SECURE_NO_WARNINGS
   SR_GAME_TITLE="Metal Gear Acid 2"

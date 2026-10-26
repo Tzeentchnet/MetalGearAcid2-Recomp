@@ -5,10 +5,38 @@ performance work. It records what was measured, which changes remain in the
 worktree, which experiments were rejected, and where the next investigation
 should begin.
 
-The retained configuration now passes three consecutive fixed-profile
-matrices for the default Dead Cell and gameplay cases. The Fortune transition
-also passes three consecutive runs after exact four-lane GE spline evaluation
-removed the CPU tessellation spike described below.
+The retained configuration passes the fixed profile for the Dead Cell
+introduction and Fortune transition. Arena gameplay remains the limiting case:
+the latest post-`/O2` run is substantially improved over the unoptimized
+runtime, but still misses the fixed gameplay gate.
+
+The benchmark driver now supports `--tail-presents` to keep the runtime alive
+long enough to collect a complete sample window after a slow scene, and
+`--fortune-extra-presents` plus `--fortune-window` for longer transition
+diagnostics. The runtime currently caps `SR_PERF_WINDOW` at 600 samples.
+Each result records wall-clock duration so startup/iteration cost is visible
+separately from frame time.
+
+Vulkan is currently a diagnostic-only comparison backend, not an acceptance
+control. In the current Arena route it presents the UI but can omit the map
+and player scene, and its GPU synchronization path is substantially slower.
+Until that renderer correctness issue is isolated, Vulkan results must not be
+used to attribute D3D12 performance regressions.
+
+The latest focused post-`/O2` measurements, each with 120 host flips and a
+120-presentation tail, are:
+
+| Case | FPS | p95 | Maximum | Maximum GPU | Result |
+|---|---:|---:|---:|---:|---|
+| Dead Cell introduction | 59.94 | 17.49 ms | 18.33 ms | 4.11 ms | Pass |
+| Fortune transition | 59.94 | 17.35 ms | 21.82 ms | 4.07 ms | Pass |
+| Arena gameplay | 49.58 | 33.37 ms | 34.30 ms | 11.31 ms | Fails FPS/p95/max |
+
+The gameplay run's frontend averaged 18.12 ms, with 8.66 ms in scheduler
+work, 4.53 ms in vertex processing, and 2.87 ms in synchronization. This
+points to a remaining gameplay CPU/frame-pacing bottleneck rather than the
+Fortune spline regression; the `/O2` change restored Fortune patch evaluation
+to 3.86 ms average.
 
 ## Acceptance contract
 

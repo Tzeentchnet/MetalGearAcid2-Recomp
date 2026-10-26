@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 import re
 import subprocess
+from time import perf_counter
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -203,14 +204,24 @@ def summarize(
     }
 
 
-def parse_framebuffer_stats(stderr: str) -> dict[str, int]:
+def parse_framebuffer_stats(
+    stderr: str,
+    *,
+    required: bool = True,
+) -> dict[str, int]:
     matches = re.findall(
         r"ged3d12: framebuffer cache [^\r\n]*?readbacks=(\d+) "
         r"aliases=(\d+)[^\r\n]*?feedback_snapshots=(\d+)",
         stderr,
     )
-    if not matches:
+    if not matches and required:
         raise ValueError("D3D12 framebuffer statistics are missing")
+    if not matches:
+        return {
+            "readbacks": 0,
+            "aliases": 0,
+            "feedback_snapshots": 0,
+        }
     readbacks, aliases, feedback_snapshots = matches[-1]
     return {
         "readbacks": int(readbacks),
@@ -277,6 +288,8 @@ def run_benchmark_case(
     thresholds: PerformanceThresholds,
     window: int,
     timeout: float,
+    renderer: str = "d3d12",
+    tail_presents: int = 0,
     validate_result: bool = True,
     unpaced: bool = False,
     extra_environment: dict[str, str] | None = None,
@@ -301,13 +314,18 @@ def run_benchmark_case(
             "SR_PERF_START": str(case.start),
             "SR_PERF_WINDOW": str(window),
             "SR_PERF_FILE": str(perf_path),
-            "SR_EXIT_AFTER_PRESENT": str(case.exit_after),
-            "SR_D3D12_STAGE_LOG": "1",
-            "SR_D3D12_VERTEX_LOG": "1",
-            "SR_D3D12_TEXTURE_LOG": "1",
-            "SR_D3D12_FRAMEBUFFER_LOG": "1",
+            "SR_EXIT_AFTER_PRESENT": str(case.exit_after + tail_presents),
         }
     )
+    if renderer == "d3d12":
+        environment.update(
+            {
+                "SR_D3D12_STAGE_LOG": "1",
+                "SR_D3D12_VERTEX_LOG": "1",
+                "SR_D3D12_TEXTURE_LOG": "1",
+                "SR_D3D12_FRAMEBUFFER_LOG": "1",
+            }
+        )
     if unpaced:
         environment["SR_NOVBPACE"] = "1"
     if extra_environment:
@@ -321,6 +339,7 @@ def run_benchmark_case(
         "none",
         "--gui",
     ]
+    started = perf_counter()
     with stdout_path.open("wb") as stdout, stderr_path.open("wb") as stderr:
         result = subprocess.run(
             command,
@@ -331,6 +350,7 @@ def run_benchmark_case(
             timeout=timeout,
             check=False,
         )
+    wall_seconds = perf_counter() - started
     stderr_text = stderr_path.read_text(encoding="utf-8", errors="replace")
     if result.returncode:
         tail = "\n".join(stderr_text.splitlines()[-20:])
@@ -341,11 +361,16 @@ def run_benchmark_case(
         load_samples(perf_path, window),
         case.required_present,
     )
-    summary.update(parse_framebuffer_stats(stderr_text))
+    summary.update(
+        parse_framebuffer_stats(stderr_text, required=renderer == "d3d12")
+    )
     summary.update(
         {
             "case": case.name,
             "mode": "unpaced" if unpaced else "paced",
+            "renderer": renderer,
+            "wall_seconds": wall_seconds,
+            "tail_presents": tail_presents,
             "profile": profile,
             "executable": str(executable),
             "pad_script": str(pad_script),

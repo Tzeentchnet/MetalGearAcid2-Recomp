@@ -144,6 +144,10 @@ class BenchmarkCommonTests(unittest.TestCase):
         self.assertEqual(len(failures), 4)
         with self.assertRaisesRegex(ValueError, "statistics are missing"):
             parse_framebuffer_stats("no cache line")
+        self.assertEqual(
+            parse_framebuffer_stats("no cache line", required=False),
+            {"readbacks": 0, "aliases": 0, "feedback_snapshots": 0},
+        )
 
     def test_requires_complete_arena_save(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
