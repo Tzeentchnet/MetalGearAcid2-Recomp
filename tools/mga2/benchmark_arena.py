@@ -128,6 +128,42 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         default=0,
         help="extend Fortune's diagnostic run without changing its start",
     )
+    parser.add_argument(
+        "--env",
+        action="append",
+        default=[],
+        metavar="NAME=VALUE",
+        help=(
+            "set a runtime environment variable for every case (repeatable); "
+            "diagnostic overrides, recorded in each summary"
+        ),
+    )
+    parser.add_argument(
+        "--alternate",
+        default=None,
+        metavar="PATHS",
+        help=(
+            "switch comma-separated optimization paths (texdecode, merge, "
+            "memo, indexed) off every other --alternate-presents guest "
+            "presentations and report the on/off split; diagnostic only. "
+            "Use a long --window (up to 600) so both sides have samples"
+        ),
+    )
+    parser.add_argument(
+        "--alternate-presents",
+        type=int,
+        default=60,
+        help="presentations per on/off half of an alternating run",
+    )
+    parser.add_argument(
+        "--pso-keys",
+        type=Path,
+        default=None,
+        help=(
+            "read and write this persistent PSO key list (benchmarks start "
+            "with no key list otherwise)"
+        ),
+    )
     parser.add_argument("--minimum-fps", type=float, default=59.0)
     parser.add_argument("--maximum-p95-ms", type=float, default=18.0)
     parser.add_argument("--maximum-frame-ms", type=float, default=33.4)
@@ -135,6 +171,25 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--maximum-readbacks", type=int, default=4)
     parser.add_argument("--timeout", type=float, default=600.0)
     return parser.parse_args(argv)
+
+
+def build_extra_environment(args: argparse.Namespace) -> dict[str, str]:
+    environment: dict[str, str] = {}
+    for item in args.env:
+        name, separator, value = item.partition("=")
+        if not name or not separator:
+            raise ValueError(f"--env expects NAME=VALUE, got {item!r}")
+        environment[name] = value
+    if args.alternate:
+        if args.alternate_presents <= 0:
+            raise ValueError("--alternate-presents must be positive")
+        environment["SR_PERF_ALTERNATE"] = args.alternate
+        environment["SR_PERF_ALTERNATE_PRESENTS"] = str(
+            args.alternate_presents
+        )
+    if args.pso_keys is not None:
+        environment["SR_D3D12_PSO_KEYS"] = str(args.pso_keys.resolve())
+    return environment
 
 
 def require_arena_save(memstick: Path) -> Path:
@@ -195,7 +250,9 @@ def main(argv: list[str]) -> int:
             raise ValueError("--fortune-window must be positive")
         if args.fortune_extra_presents < 0:
             raise ValueError("--fortune-extra-presents cannot be negative")
-        fixed_profile = not args.allow_nonstandard_profile
+        extra_environment = build_extra_environment(args)
+        # An alternating run is a paired diagnostic, not an acceptance run.
+        fixed_profile = not args.allow_nonstandard_profile and not args.alternate
         profile = read_graphics_profile(executable, required=None)
         expected = {
             "renderer": args.renderer,
@@ -253,6 +310,7 @@ def main(argv: list[str]) -> int:
                     renderer=args.renderer,
                     tail_presents=case_tail,
                     validate_result=fixed_profile,
+                    extra_environment=extra_environment,
                 )
             )
             if args.include_unpaced:
@@ -273,6 +331,7 @@ def main(argv: list[str]) -> int:
                         tail_presents=case_tail,
                         validate_result=False,
                         unpaced=True,
+                        extra_environment=extra_environment,
                     )
                 )
         combined = combine_results(results, fixed_profile)

@@ -39,7 +39,17 @@ CLEARED_ENVIRONMENT = (
     "SR_GE_SCALAR_SPLINE",
     "SR_GE_SPLINE_LOG",
     "SR_NOVBPACE",
+    "SR_D3D12_SYNC_TEXTURE_DECODE",
+    "SR_D3D12_VERIFY_TEXTURE_DECODE",
+    "SR_D3D12_PSO_KEYS",
+    "SR_D3D12_NO_PSO_KEYS",
+    "SR_PERF_ALTERNATE",
+    "SR_PERF_ALTERNATE_PRESENTS",
+    "SR_TRACE_STALLS",
+    "SR_SLOW_FRAME_MS",
 )
+# Written by the runtime for host flips whose frame straddled an alternation change.
+ALTERNATE_TRANSITION_BIT = 0x80000000
 
 
 @dataclass(frozen=True)
@@ -105,7 +115,12 @@ def percentile(sorted_values: list[float], percentage: float) -> float:
     return sorted_values[math.ceil(len(sorted_values) * percentage) - 1]
 
 
-def load_samples(path: Path, window: int) -> list[dict[str, float]]:
+def load_samples(
+    path: Path,
+    window: int,
+    *,
+    keep_all: bool = False,
+) -> list[dict[str, float]]:
     if window <= 0:
         raise ValueError("sample window must be positive")
     with path.open("r", encoding="ascii", newline="") as file:
@@ -131,7 +146,7 @@ def load_samples(path: Path, window: int) -> list[dict[str, float]]:
             parsed.append(sample)
         except (KeyError, TypeError, ValueError) as error:
             raise ValueError(f"invalid performance row: {row}") from error
-    samples = parsed[:window]
+    samples = parsed if keep_all else parsed[:window]
     if any("gpu_source_flip" in sample for sample in parsed):
         gpu_by_flip = {
             int(sample["gpu_source_flip"]): sample["gpu_ms"]
@@ -145,6 +160,62 @@ def load_samples(path: Path, window: int) -> list[dict[str, float]]:
                 -1.0,
             )
     return samples
+
+
+def describe(samples: list[dict[str, float]]) -> dict[str, float]:
+    """Frame statistics for an arbitrary set of rows (no acceptance meaning)."""
+    if not samples:
+        raise ValueError("cannot describe an empty sample")
+    frames = sorted(sample["frame_ms"] for sample in samples)
+    average = sum(frames) / len(frames)
+    return {
+        "samples": len(samples),
+        "fps": 1000.0 / average,
+        "average_ms": average,
+        "p50_ms": percentile(frames, 0.50),
+        "p95_ms": percentile(frames, 0.95),
+        "maximum_ms": frames[-1],
+        "frontend_average_ms": sum(s["frontend_ms"] for s in samples)
+        / len(samples),
+        "backend_average_ms": sum(s["backend_ms"] for s in samples)
+        / len(samples),
+    }
+
+
+def split_alternation(
+    samples: list[dict[str, float]],
+) -> dict[str, object] | None:
+    """Split rows of a SR_PERF_ALTERNATE run into paths-on and paths-off.
+
+    Rows whose frame straddled a change (the runtime sets the high bit of
+    ``alt_off``) belong to neither side. Returns None for a log without the
+    ``alt_off`` column, and omits a side that has no rows.
+    """
+    if not samples or "alt_off" not in samples[0]:
+        return None
+    groups: dict[str, list[dict[str, float]]] = {"on": [], "off": []}
+    discarded = 0
+    for sample in samples:
+        mask = int(sample["alt_off"])
+        if mask & ALTERNATE_TRANSITION_BIT:
+            discarded += 1
+        elif mask:
+            groups["off"].append(sample)
+        else:
+            groups["on"].append(sample)
+    result: dict[str, object] = {"discarded": discarded}
+    for name, rows in groups.items():
+        if rows:
+            result[name] = describe(rows)
+    if "on" in result and "off" in result:
+        on, off = result["on"], result["off"]
+        result["delta"] = {
+            "average_ms": off["average_ms"] - on["average_ms"],
+            "p95_ms": off["p95_ms"] - on["p95_ms"],
+            "frontend_average_ms": off["frontend_average_ms"]
+            - on["frontend_average_ms"],
+        }
+    return result
 
 
 def summarize(
@@ -298,9 +369,15 @@ def run_benchmark_case(
     perf_path = output / "perf.csv"
     stdout_path = output / "stdout.log"
     stderr_path = output / "stderr.log"
+    alternating = bool(
+        extra_environment and extra_environment.get("SR_PERF_ALTERNATE")
+    )
     environment = os.environ.copy()
     for name in CLEARED_ENVIRONMENT:
         environment.pop(name, None)
+    # Production writes and reads a persistent PSO key list; benchmarks start cold unless a
+    # list is requested, so runs stay comparable with the historical results.
+    environment["SR_D3D12_NO_PSO_KEYS"] = "1"
     environment.update(
         {
             "PSP_ISO": str(iso),
@@ -330,6 +407,8 @@ def run_benchmark_case(
         environment["SR_NOVBPACE"] = "1"
     if extra_environment:
         environment.update(extra_environment)
+        if extra_environment.get("SR_D3D12_PSO_KEYS"):
+            environment.pop("SR_D3D12_NO_PSO_KEYS", None)
     command = [
         str(executable),
         "--boot",
@@ -361,6 +440,10 @@ def run_benchmark_case(
         load_samples(perf_path, window),
         case.required_present,
     )
+    if alternating:
+        summary["alternation"] = split_alternation(
+            load_samples(perf_path, window, keep_all=True)
+        )
     summary.update(
         parse_framebuffer_stats(stderr_text, required=renderer == "d3d12")
     )
@@ -374,6 +457,7 @@ def run_benchmark_case(
             "profile": profile,
             "executable": str(executable),
             "pad_script": str(pad_script),
+            "extra_environment": dict(extra_environment or {}),
         }
     )
     failures = validate(summary, thresholds) if validate_result else []

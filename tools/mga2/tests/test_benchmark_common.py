@@ -12,6 +12,7 @@ sys.path.insert(0, str(TOOLS))
 
 from benchmark_arena import (
     ARENA_CASES,
+    build_extra_environment,
     combine_results,
     require_arena_save,
     select_cases,
@@ -19,9 +20,11 @@ from benchmark_arena import (
 from benchmark_common import (
     CLEARED_ENVIRONMENT,
     PerformanceThresholds,
+    describe,
     load_samples,
     parse_framebuffer_stats,
     read_graphics_profile,
+    split_alternation,
     summarize,
     validate,
 )
@@ -209,6 +212,78 @@ class BenchmarkCommonTests(unittest.TestCase):
         ))
         self.assertIn("SR_GE_SCALAR_SPLINE", CLEARED_ENVIRONMENT)
         self.assertIn("SR_GE_SPLINE_LOG", CLEARED_ENVIRONMENT)
+
+
+class AlternationTests(unittest.TestCase):
+    @staticmethod
+    def row(frame: float, alt_off: int) -> dict[str, float]:
+        return {
+            "frame_ms": frame,
+            "frontend_ms": frame - 2.0,
+            "backend_ms": 2.0,
+            "alt_off": float(alt_off),
+        }
+
+    def test_splits_on_off_and_discards_transitions(self) -> None:
+        rows = [
+            self.row(16.0, 0),
+            self.row(16.0, 0),
+            self.row(30.0, 0x80000002),
+            self.row(20.0, 2),
+            self.row(22.0, 2),
+        ]
+        result = split_alternation(rows)
+        assert result is not None
+        self.assertEqual(result["discarded"], 1)
+        self.assertEqual(result["on"]["samples"], 2)
+        self.assertEqual(result["off"]["samples"], 2)
+        self.assertAlmostEqual(result["delta"]["average_ms"], 5.0)
+
+    def test_reports_only_the_side_that_has_rows(self) -> None:
+        result = split_alternation([self.row(16.0, 0)])
+        assert result is not None
+        self.assertIn("on", result)
+        self.assertNotIn("off", result)
+        self.assertNotIn("delta", result)
+
+    def test_returns_none_without_the_alt_off_column(self) -> None:
+        self.assertIsNone(
+            split_alternation(
+                [{"frame_ms": 16.0, "frontend_ms": 10.0, "backend_ms": 2.0}]
+            )
+        )
+        with self.assertRaises(ValueError):
+            describe([])
+
+    def test_keep_all_returns_rows_beyond_the_window(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "perf.csv"
+            path.write_text(
+                "flip,present,frame_ms,frontend_ms,backend_ms,gpu_ms,"
+                "alt_off\n"
+                "1,1,16,10,6,-1,0\n"
+                "2,2,17,11,6,-1,2\n"
+                "3,3,18,12,6,-1,2\n",
+                encoding="ascii",
+            )
+            self.assertEqual(len(load_samples(path, 2)), 2)
+            self.assertEqual(len(load_samples(path, 2, keep_all=True)), 3)
+
+    def test_builds_the_runtime_environment(self) -> None:
+        class Args:
+            env = ["SR_FOO=bar=baz"]
+            alternate = "merge,texdecode"
+            alternate_presents = 30
+            pso_keys = None
+
+        environment = build_extra_environment(Args())
+        self.assertEqual(environment["SR_FOO"], "bar=baz")
+        self.assertEqual(environment["SR_PERF_ALTERNATE"], "merge,texdecode")
+        self.assertEqual(environment["SR_PERF_ALTERNATE_PRESENTS"], "30")
+        Args.env = ["missing-separator"]
+        with self.assertRaises(ValueError):
+            build_extra_environment(Args())
+        self.assertIn("SR_PERF_ALTERNATE", CLEARED_ENVIRONMENT)
 
 
 if __name__ == "__main__":

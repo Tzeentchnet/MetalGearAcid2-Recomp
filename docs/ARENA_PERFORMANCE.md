@@ -592,6 +592,83 @@ Stage 01 has no spline commands in this window. Its generic benchmark result
 reports only the expected absence of framebuffer aliases and feedback
 snapshots; timing, execution, and the route itself pass.
 
+## Yakumo-derived tooling and prewarm (branch `perf/yakumo-borrowed-ideas`)
+
+A review of the other completed PSP recompilations (Ace Combat X and Yakumo) found
+little performance work in the former and a mature toolchain in the latter. Yakumo's
+Vulkan renderer was used as the design reference because this project's Vulkan backend
+is not trustworthy (it can omit the map and player scene); everything below targets the
+D3D12 backend, and no Yakumo source was copied. The shared runtime changes are in
+psp-recomp `7fee88f`/`7708476`.
+
+**Measurement tooling**
+
+- `SR_TRACE_STALLS=1` prints a `[slow-frame]` line for each host flip over
+  `SR_SLOW_FRAME_MS` (default 1.25 x the budget): the three largest exclusive phases,
+  scheduler idle, texture misses and decode wait, PSO fallback binds, and the previous
+  flip's backend stages. It works without a sample window.
+- `SR_PERF_ALTERNATE=texdecode,merge,memo,indexed` switches output-identical paths off
+  every `SR_PERF_ALTERNATE_PRESENTS` (default 60) guest presentations. The performance CSV
+  is now v4 (`texture_misses`, `texture_decode_wait_us`, `pso_fallbacks`, `alt_off`; bit
+  31 of `alt_off` marks a flip that straddled a change). The harness exposes it as
+  `--alternate PATHS [--alternate-presents N]`, reports the on/off split under
+  `alternation` in `summary.json`, and treats the run as diagnostic (never an acceptance
+  pass). `--env NAME=VALUE` passes other runtime variables and `--pso-keys PATH` enables a
+  persistent key list; benchmarks otherwise start with none so they stay comparable.
+- Example, gameplay window, all four paths alternating every 30 presentations (200
+  flips): frame average 16.68 ms on versus 16.95 ms off, frontend average 14.84 versus
+  15.15 ms. Vblank pacing pins frame time near 16.68 ms, so the frontend average and the
+  maximum are the informative columns.
+
+**Optimizations (all kill-switched and output-identical)**
+
+- *Background texture decode.* A miss copies the level bytes, palette and decode state on
+  the GE thread (`ge_tex_snapshot_*`); workers decode and xBRZ-scale the copy and texture
+  preparation waits before recording the upload. `SR_D3D12_SYNC_TEXTURE_DECODE=1`
+  restores in-line decode. `SR_D3D12_VERIFY_TEXTURE_DECODE=1` decodes every texture both
+  ways and aborts on a difference; it passed over the Dead Cell, Fortune and gameplay
+  runs from boot. Verification found that a buffer width narrower than the texture (a
+  64x256 8-bit texture with a 48-texel buffer) makes the live decoder read past the
+  declared span; the snapshot now copies the same extent so both decode the same bytes.
+  The measured gain is small: the Fortune cut has eight misses in one frame and the
+  in-line decode cost 0.8-1.4 ms of `texture_capture_ms` against 0.5-0.6 ms now, with no
+  decode wait. Steady-state windows contain no misses.
+- *Persistent PSO key list.* The serialized pipeline library is unstable across launches,
+  but pipeline keys are plain state. Each run records the keys it requests and the next
+  run queues them on the existing PSO worker at startup. In the Dead Cell run a cold start
+  made 3 asynchronous requests (3 misses); a warm start queued the 3 recorded keys and
+  made none. The keys are 16 bytes each, so the file is a few hundred bytes.
+
+**Acceptance**
+
+All six CTests pass (the vertex and perf-stats tests were extended), as do the 14 Python
+helper tests and the tutorial benchmark (60.44 FPS, 16.84 ms p95, 18.09 ms maximum,
+3.76 ms maximum GPU). With the default configuration, Dead Cell and Fortune passed in
+every run. Of six default gameplay runs (four with the stall trace on), five passed at
+59.94 FPS with a 17.5-18.0 ms maximum frame, and one reported 58.48 FPS with a 33.37 ms
+maximum frame; the single in-line decode run also passed. That miss is the already
+documented thin margin on a host outlier, not a decode wait: decode wait was zero in the
+measured windows.
+
+**Findings from the new stall trace (not yet acted on)**
+
+- A periodic backend `begin` stall of 8-10 ms recurs roughly every 17 flips in the
+  gameplay lead-in (for example presentations 34,167, 34,175, 34,215 and 37,007 onward)
+  while the aligned GPU time stays at or below 11 ms. This looks like a wait on an
+  in-flight frame and is the next thing to attribute.
+- The first frames of a run wait about 21 ms for decode (`decode wait=21469 us`), so
+  background decode does not hide a cold start; it only overlaps work within a frame.
+- Presentation 37,790 loses 31.5 ms inside one HLE call just before the gameplay
+  window, and presentation 38,542 shows 14.8 ms of scheduler idle with little work.
+  Both are pacing or HLE events rather than render cost.
+
+**Deliberately not done**
+
+- *Native fast paths* (Yakumo's `register_native_fast_path`) need a measured hot guest
+  leaf, and the section 7 sampling shows none worth replacing.
+- *Vulkan.* The same ideas are not ported to `gpu_sdl3vk`; its correctness bug has to be
+  isolated first.
+
 ## Experiments rejected or superseded
 
 ### Per-vertex cached raster projection
