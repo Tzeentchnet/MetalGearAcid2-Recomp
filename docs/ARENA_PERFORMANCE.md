@@ -5,9 +5,10 @@ performance work. It records what was measured, which changes remain in the
 worktree, which experiments were rejected, and where the next investigation
 should begin.
 
-The work is not complete. The Dead Cell profile has reached the steady-state
-FPS and p95 targets in a diagnostic run, but still needs a clean acceptance
-run. Arena gameplay still fails both CPU and GPU budgets.
+The retained configuration now passes three consecutive fixed-profile
+matrices for the default Dead Cell and gameplay cases. The Fortune transition
+also passes three consecutive runs after exact four-lane GE spline evaluation
+removed the CPU tessellation spike described below.
 
 ## Acceptance contract
 
@@ -29,6 +30,14 @@ The two default cases are:
 | Dead Cell introduction | 27,900 | 28,000 | 28,800 | 120 guest presentations |
 | Arena gameplay | 37,900 | 38,000 | 38,800 | 120 guest presentations |
 
+The Fortune transition is an explicit third case so the historical meaning of
+`--case both` remains unchanged:
+
+| Case | Measurement start | Required presentation | Exit bound | Warm-up |
+|---|---:|---:|---:|---:|
+| Vamp-to-Fortune transition | 29,280 | 29,307 | 30,000 | 480 guest presentations |
+
+Use `--case fortune` for its focused gate or `--case all` for all three cases.
 Each case measures 120 actual host flips. Acceptance uses the production paced
 path and the following fixed profile:
 
@@ -51,7 +60,8 @@ acceptance pass.
 
 The title now has shared benchmark support in
 [`benchmark_common.py`](../tools/mga2/benchmark_common.py), the two-window
-Arena driver in [`benchmark_arena.py`](../tools/mga2/benchmark_arena.py), and
+Arena driver plus the explicit Fortune case in
+[`benchmark_arena.py`](../tools/mga2/benchmark_arena.py), and
 Python regression coverage in
 [`test_benchmark_common.py`](../tools/mga2/tests/test_benchmark_common.py).
 
@@ -125,9 +135,10 @@ evaluation and patch draw work peaked at 6.03 ms and 3.06 ms.
 **Correctness evidence:** D3D12 vertex hashes remained identical across the
 refactor, including `cb55d899048a60c2` at backend presentation 12,480.
 
-**Remaining caveat:** that run used `SR_GEDUMP=1`, produced 118 readbacks, and
-therefore intentionally failed the readback gate. A clean non-diagnostic run
-is still required.
+**Historical caveat:** that run used `SR_GEDUMP=1`, produced 118 readbacks,
+and therefore intentionally failed the readback gate. The clean current-profile
+rerun recorded below passes every acceptance gate with two cumulative
+readbacks.
 
 ### 2. Indexed transform deduplication
 
@@ -365,6 +376,194 @@ Final matrix: three more paced runs of both windows passed 2/3; run 3 had a
 sustained stretch of 33.4 ms frames in gameplay (58.0 FPS) at an unchanged
 workload, so the margin over the vblank interval is still thin on heavy frames.
 
+## Current-profile Dead Cell acceptance rerun (2026-10-25)
+
+The current `mga2.exe` was tested with the production paced path and the active
+graphics profile: D3D12, 4x internal resolution, 2x texture scaling, and
+full-rate 1x1 shading.
+
+```powershell
+python tools\mga2\benchmark_arena.py `
+  --memstick build\mga2\arena-d3d12-shadow-fix\memstick `
+  --case dead-cell `
+  --output out\benchmarks\dead-cell-current-20261025-0936
+```
+
+| Metric | Result | Gate |
+|---|---:|---:|
+| Host-flip samples | 120 | 120 |
+| Displayed FPS | 59.94 | at least 59 |
+| Frame-time p95 | 17.03 ms | at most 18 ms |
+| Maximum frame | 17.39 ms | at most 33.4 ms |
+| Average aligned GPU time | 1.60 ms | informational |
+| Maximum aligned GPU time | 3.24 ms | at most 16.68 ms |
+| Cumulative framebuffer readbacks | 2 | at most 4 |
+| Framebuffer aliases | 63,120 | nonzero |
+| Ordered feedback snapshots | 47,422 | nonzero |
+
+The run passed every acceptance gate. Frontend time averaged 15.88 ms and
+backend recording averaged 0.81 ms. Patch evaluation averaged 2.76 ms and
+peaked at 5.63 ms; patch drawing averaged 0.69 ms and peaked at 1.46 ms.
+
+## Vamp-to-Fortune transition diagnosis (2026-10-25)
+
+The passing Dead Cell window does not include the later camera cut reported as
+a slowdown. Its latest sample ends at presentation 28,319. A visual-only
+capture sweep located the relevant boundary:
+
+- presentation 29,292 is the last Vamp frame;
+- presentation 29,293 begins the new camera shot; and
+- Fortune first enters the frame at presentation 29,307.
+
+Three capture-free paced profiles used the production D3D12 4x/2x/full-rate
+configuration. Each recorded 300 host flips from presentation 28,802 through
+29,845. The GE workload begins increasing on the flip recorded at presentation
+29,287, immediately before the visible cut. The first post-cut render sample at
+presentation 29,294 contains:
+
+| Workload | Vamp | First post-cut sample |
+|---|---:|---:|
+| Total GE draw commands | 920 | 1,918 |
+| Through-mode primitive draws | 243 | 243 |
+| Transform primitive draws | 87 | 67 |
+| Derived spline commands | 590 | 1,608 |
+| Derived spline control vertices | 9,440 | 25,728 |
+
+`ge_draws` counts primitive, Bezier, and spline commands, while the through and
+transform counters count primitive commands only. Bezier time is zero in both
+shots, so subtracting the two primitive counts gives the spline count. Every
+spline command in this sequence consumes 16 control vertices. Fortune settles
+at 1,473-1,581 spline commands and 23,568-25,296 spline control vertices per
+rendered frame, versus exactly 590 and 9,440 for Vamp.
+
+The two runs without unrelated host outliers measured the following matched
+render-row averages:
+
+| Metric | Vamp | Fortune |
+|---|---:|---:|
+| Heavy render-frame time | 16.66-16.87 ms | 22.10-22.45 ms |
+| Active CPU time excluding scheduler idle | 10.77-11.47 ms | 21.86-22.18 ms |
+| Complete vertex/patch phase | 8.51-8.92 ms | 20.02-20.32 ms |
+| Patch evaluation | 5.55-5.86 ms | 14.22-14.46 ms |
+| Patch drawing | 1.40-1.44 ms | 3.38-3.42 ms |
+| Aligned GPU time | 3.19-3.51 ms | 3.14-3.17 ms |
+| Host-frame p95 for the surrounding shot | 16.86-17.47 ms | 22.53-23.27 ms |
+
+Run 1 encountered two non-repeatable CPU outliers, but its command counts and
+phase attribution were identical. The per-spline median cost remains stable:
+9.655 microseconds of evaluation and 2.385 microseconds of patch drawing for
+Vamp, versus 9.530 and 2.235 microseconds for Fortune. The slowdown is
+therefore not a new per-patch slow path. Fortune and her railgun introduce
+approximately 2.6 times as many four-by-four spline surfaces, exhausting the
+roughly 5 ms of scheduler slack present during Vamp and pushing alternating
+render frames past one vblank interval.
+
+The responsible CPU path is the `GE_SPLINE` handler in
+`psp-recomp\src\rt\ge.c`: `draw_spline` calls `build_patch_columns` and
+`evaluate_patch_columns` under `SR_PERF_PATCH_EVAL`, then `draw_patch_grid`
+under `SR_PERF_PATCH_DRAW`. Vertex decoding remains about 0.63 ms, aligned GPU
+time does not increase, and the through-mode/background workload is unchanged.
+This rules out D3D12 GPU saturation, xBRZ, framebuffer feedback, interpreter
+fallback, and a camera-transition HLE stall as the source.
+
+The average paced host-frame interval remains near 16.7 ms because short
+catch-up flips alternate with the 22-25 ms render flips. The visible symptom is
+therefore a frame-pacing/p95 regression rather than sustained GPU-limited
+throughput. No runtime change was made as part of this diagnosis.
+
+## Exact four-lane spline optimization (2026-10-25)
+
+The retained fix adapts PPSSPP's GPL-compatible GE-exact SIMD implementation
+from `GPU/Common/SplineCommon.cpp` revision `ce97cb120182`. Provenance is
+recorded in the shared runtime `CREDITS.md`.
+
+`ge_patch_math.h` contains the current scalar arithmetic as the reference and
+SSE2 helpers for four GE lerps, spline de Boor evaluation, color evaluation,
+and GE tangent addition at once. `draw_spline` now:
+
+1. evaluates four adjacent control columns vertically in SIMD;
+2. gathers the four control values required by each generated U lane, including
+   groups that cross segment boundaries;
+3. evaluates four generated vertices horizontally in SIMD; and
+4. retains the scalar GE product/row-sum normal cross product and the existing
+   patch-grid draw path.
+
+The interpolation order, six integer alpha values, fixed-point conversion,
+exponent selection, endpoint handling, generated UVs, color rounding, normal
+facing, tessellation limits, axis caches, and output ordering are unchanged.
+The final one to three U samples use padded input lanes but write only valid
+vertices. Non-SSE2 builds retain the scalar path, and
+`SR_GE_SCALAR_SPLINE=1` selects it at runtime for differential testing.
+Benchmark subprocesses clear both that override and the opt-in
+`SR_GE_SPLINE_LOG` vertex-hash diagnostic.
+
+The focused `mga2_ge_patch_math` CTest compares raw float bits, not epsilon:
+
+- 100,000 randomized four-lane GE lerps;
+- 100,000 randomized four-lane GE additions;
+- 30,000 randomized spline evaluations with before/after tangents;
+- 30,000 randomized color evaluations; and
+- 10,000 cross-segment gather cases.
+
+The inputs cover signs, zero and negative zero, subnormals, tiny and maximum
+finite exponents, alpha endpoints 0 and 256, and arbitrary alpha tuples. The
+test also verifies endpoint preservation for infinity and NaN bit patterns.
+
+End-to-end scalar/SIMD differential runs from presentation 28,800 through
+29,420 produced:
+
+- 12,869 identical per-GE-frame spline draw/vertex/content hashes;
+- 109 identical periodic D3D12 vertex-count/batch/content hashes; and
+- byte-identical framebuffer captures at presentations 29,292, 29,293,
+  29,307, and 29,400.
+
+The four capture SHA-256 values are respectively
+`52d4398e5c872b83d35db27b76903356df506892ae5cba8e09077f3ef40722d7`,
+`049ff6f45486ecb0c68e36d0d4631cc68bbc0b95c13c641f6e953ec250bf030c`,
+`f7fbe6a7cdfeb9009980f9470d50c44b9fc0653caf72e9ff5017ff32b0245fa5`,
+and
+`9dace9f6af7e5b522857ed5fbcfbd8f71c4c521d069e184e6adcb29634c3cb6e`.
+
+The focused fixed-profile result is:
+
+| Path/run | FPS | p95 | Maximum | Patch evaluation average / maximum | Patch draw average / maximum | Vertex phase average / maximum | Maximum GPU |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Scalar reference | 59.94 | 24.25 ms | 25.79 ms | 7.16 / 16.50 ms | 1.69 / 4.38 ms | 10.05 / 23.16 ms | 3.65 ms |
+| SIMD run 4 | 59.96 | 17.35 ms | 18.02 ms | 3.86 / 9.05 ms | 1.67 / 4.10 ms | 6.72 / 15.68 ms | 3.65 ms |
+| SIMD run 5 | 59.94 | 17.06 ms | 19.21 ms | 3.87 / 8.73 ms | 1.68 / 4.34 ms | 6.73 / 16.71 ms | 3.29 ms |
+| SIMD run 6 | 59.94 | 17.44 ms | 19.00 ms | 3.85 / 8.58 ms | 1.67 / 4.25 ms | 6.70 / 16.18 ms | 3.26 ms |
+
+The first SIMD matrix, before four-lane GE tangent addition, passed two of
+three runs at 17.18, 18.42, and 17.19 ms p95. Completing that exact part of the
+upstream design produced the three consecutive passing runs above. Average
+patch evaluation is now about 46% of the scalar reference in the identical
+window, while patch drawing and GPU time remain unchanged. Deterministic
+workload counts also remain unchanged: the sample averages 888.742 total GE
+draws per host flip and peaks at 1,918.
+
+The p95 gate is met without tessellation reduction, memoization, indexed patch
+drawing, threading, or GPU tessellation, so those higher-risk candidates were
+not implemented.
+
+Regression validation after the final build includes:
+
+- all 6 configured CTests and all 9 Python benchmark-helper tests;
+- three consecutive default Arena matrices:
+
+  | Case | FPS range | p95 range | Maximum range | Maximum GPU range |
+  |---|---:|---:|---:|---:|
+  | Dead Cell | 59.93-59.94 | 16.93-17.09 ms | 17.37-17.78 ms | 3.23-3.95 ms |
+  | Gameplay | 59.94 | 16.68-16.77 ms | 16.69-17.79 ms | 10.87-11.35 ms |
+
+- the tutorial benchmark at 60.44 FPS, 17.23 ms p95, a 17.87 ms maximum,
+  and a 4.09 ms maximum GPU sample; and
+- the Stage 01 route at 59.94 FPS, 17.02 ms p95, a 17.56 ms maximum, and a
+  0.68 ms maximum GPU sample.
+
+Stage 01 has no spline commands in this window. Its generic benchmark result
+reports only the expected absence of framebuffer aliases and feedback
+snapshots; timing, execution, and the route itself pass.
+
 ## Experiments rejected or superseded
 
 ### Per-vertex cached raster projection
@@ -413,10 +612,12 @@ without hiding steady-state frames.
 p95 below one 30 Hz interval and does not address the GPU limit. Further
 compiler-level tuning without a native hotspot profile would be speculative.
 
-## Current measured state
+## Historical pre-sections 6-9 measured state
 
-The latest run includes `/O2`, indexed transform deduplication, sequence
-reference indirection, triangle-list capture, and dirty-union feedback:
+This retained snapshot predates the destination-snapshot, hashing, indexed
+capture, draw-merging, and state-memo work in sections 6-9. The then-latest run
+included `/O2`, indexed transform deduplication, sequence reference
+indirection, triangle-list capture, and dirty-union feedback:
 
 | Metric | Latest gameplay run |
 |---|---:|
@@ -458,9 +659,14 @@ if they were one frame. Representative expensive frames remain around 30 ms
 frontend time plus 2.7-3.5 ms backend recording, while aligned GPU work
 remains around 18-22 ms.
 
-## Ranked next investigations
+## Historical ranked investigations
 
-### 1. Rank generated native guest hotspots
+This was the ranking at the historical snapshot above. Items 1-3 were
+completed in sections 7-9. Item 4 received the bounded overlap trace described
+in section 9, but a worker remains deferred because the acceptance gates do
+not justify its unresolved correctness risk.
+
+### 1. Rank generated native guest hotspots (completed)
 
 Generated native guest execution averages approximately 10.3 ms, reaches
 roughly 12.5 ms at p95 in the captured gameplay CSV, and peaks at 16.94 ms.
@@ -509,7 +715,7 @@ computed-transfer frequency, watched-memory checks, excessive function
 boundaries, and inefficient scalar or VFPU floating-point code. Apply only
 the structural change demonstrated by the hottest functions.
 
-### 2. Attribute per-draw CPU and GPU work
+### 2. Attribute per-draw CPU and GPU work (completed)
 
 Do this before choosing indexed capture, texture-cache changes, draw merging,
 or a GE worker.
@@ -580,7 +786,7 @@ xBRZ is unlikely to explain the measured steady-state spikes: the full run
 performed only 639 texture uploads, and backend texture preparation peaks near
 0.003 ms in the current window.
 
-### 3. Preserve indexing through the PC-native D3D12 capture boundary
+### 3. Preserve indexing through the PC-native D3D12 capture boundary (completed)
 
 This remains the highest-confidence frontend implementation candidate after
 the attribution above. The GE now transforms 23,132 unique source vertices but
@@ -639,7 +845,7 @@ checks for unique vertices; it is not a measurement of packed-format
 conversion alone. Indexed capture therefore has no defensible 6-8 ms expected
 saving until its subphases are measured.
 
-### 4. Evaluate asynchronous GE execution only after tracing safe overlap
+### 4. Evaluate asynchronous GE execution only after tracing safe overlap (trace completed; worker deferred)
 
 The current list manager runs synchronously on the guest host thread. A worker
 could overlap GE decode, transform, and assembly with generated guest work, but
@@ -699,19 +905,17 @@ readbacks remain zero, so `sync_ms` does not by itself prove a frame-fence
 wait. Split watched-VRAM lookup, transfer, readback, and actual wait time.
 Increasing queue depth blindly can add latency without improving throughput.
 
-### Validate partial-feedback visual equivalence
+### Validate partial-feedback visual equivalence (completed)
 
-Capture exact aligned Dead Cell and gameplay presentations with current
-dirty-union snapshots and with
-`SR_D3D12_LEGACY_FEEDBACK_SNAPSHOTS=1`. Compare logical output, internal
-resolution output, snapshot/reuse counters, and source host flips. Retain the
-partial path only if ordered output matches.
+Current and legacy feedback snapshots are byte-identical at aligned Dead Cell,
+gameplay, and later Arena presentations. The destination-snapshot differential
+is also byte-identical at those points.
 
-### Close the Dead Cell acceptance result
+### Close the Dead Cell acceptance result (completed)
 
-Run the Dead Cell case without `SR_GEDUMP`, then repeat it three times if the
-first run passes. This should be done before any broad native subsystem
-replacement so the solved spline workload remains a regression gate.
+Three consecutive paced matrices passed earlier, and the fresh current-profile
+run recorded above passes every gate at 59.94 FPS, 17.03 ms p95, 17.39 ms
+maximum frame time, 3.24 ms maximum GPU time, and two cumulative readbacks.
 
 ## Directions to keep deprioritized
 
@@ -846,14 +1050,13 @@ Completed:
 
 Still required:
 
-- Run a clean Dead Cell acceptance sample.
-- Perform current-versus-legacy partial-feedback visual differentials.
-- Reach all four fixed-quality gates in both Arena windows for three
-  consecutive paced runs.
-- Re-run the tutorial benchmark and Stage 01 route.
-- Smoke-test at least one additional Arena selection.
-- Run the relevant shared runtime suite and final Release build.
-- Repeat native-versus-interpreted visual checks.
+- Recover enough CPU margin that the latest gameplay matrix passes three
+  consecutive paced runs; the most recent final matrix passed only 2/3.
+- Re-run the Stage 01 route.
+- Run a paced smoke test of at least one additional Arena selection; the
+  presentation-45,000 checks currently establish visual equivalence only.
+- Run the relevant shared runtime suite and a final Release build after the
+  last runtime change.
 
 ## Local artifact index
 
@@ -870,8 +1073,20 @@ logs for continued local investigation:
 | `out\benchmarks\arena-gameplay-o2` | First generated `/O2` gameplay run |
 | `out\benchmarks\arena-gameplay-projection-cache` | Reverted projection-cache experiment |
 | `out\benchmarks\arena-gameplay-vertex-indirection` | Current vertex-reference experiment |
+| `out\benchmarks\perf-memo2-r1` through `perf-memo2-r3` | Three consecutive passing state-memo matrices |
+| `out\benchmarks\perf-final-r1` through `perf-final-r3` | Final repeat matrix; run 3 gameplay misses only the FPS gate |
+| `out\benchmarks\dead-cell-current-20261025-0936` | Fresh clean Dead Cell acceptance run at the current graphics profile |
+| `out\benchmarks\arena-fortune-transition-locator-*` | Coarse, fine, and exact visual sweeps locating the Fortune cut |
+| `out\benchmarks\arena-fortune-transition-baseline-r1` through `arena-fortune-transition-baseline-r3` | Three capture-free paced transition profiles |
+| `out\benchmarks\arena-fortune-transition-analysis` | Matched render rows and reduced transition summary |
+| `out\benchmarks\arena-fortune-scalar-reference` | Scalar reference for the permanent Fortune benchmark case |
+| `out\benchmarks\arena-fortune-simd-r4` through `arena-fortune-simd-r6` | Three consecutive passing optimized Fortune runs |
+| `out\benchmarks\arena-fortune-simd-diff-scalar` and `arena-fortune-simd-diff-vector-add4` | Exact scalar/SIMD spline hashes, D3D12 hashes, and captures |
+| `out\benchmarks\arena-simd-regression-r3` through `arena-simd-regression-r5` | Three consecutive passing Dead Cell/gameplay matrices |
+| `out\benchmarks\tutorial-simd-regression` | Passing tutorial benchmark |
+| `out\benchmarks\stage01-simd-regression` | Stage 01 route and timing smoke test |
 
-The shared runtime changes were committed and pushed as `3de8644`. The title
-changes are committed by the repository revision containing this document. Do
-not remove the existing untracked runtime `build\` directory or
+The earlier shared runtime baseline was committed as `3de8644`; the spline SIMD
+changes described here are the current runtime worktree changes. Do not remove
+the existing untracked runtime `build\` directory or
 `interp_fallback_test.misses`.

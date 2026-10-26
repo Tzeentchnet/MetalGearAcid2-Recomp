@@ -18,9 +18,11 @@ endif()
 if(NOT EXISTS "${PSP_RECOMP_DIR}/src/rt/display_state.c" OR
    NOT EXISTS "${PSP_RECOMP_DIR}/src/rt/display_state.h" OR
    NOT EXISTS "${PSP_RECOMP_DIR}/src/rt/perf_stats.c" OR
-   NOT EXISTS "${PSP_RECOMP_DIR}/src/rt/perf_stats.h")
+   NOT EXISTS "${PSP_RECOMP_DIR}/src/rt/perf_stats.h" OR
+   NOT EXISTS "${PSP_RECOMP_DIR}/src/rt/ge_patch_math.h" OR
+   NOT EXISTS "${PSP_RECOMP_DIR}/tools/tests/ge_patch_math_test.c")
   message(FATAL_ERROR
-    "Metal Gear Acid 2 requires psp-recomp commit 3de8644 or newer")
+    "Metal Gear Acid 2 requires the matching psp-recomp runtime checkout")
 endif()
 if(MGA2_ENABLE_D3D12 OR MGA2_ENABLE_VULKAN)
   if(NOT WIN32)
@@ -306,6 +308,12 @@ if(BUILD_TESTING)
   target_include_directories(mga2_perf_stats_tests PRIVATE "${RT}")
   target_compile_options(mga2_perf_stats_tests PRIVATE ${MGA2_FP_FLAGS})
   add_test(NAME mga2_perf_stats COMMAND mga2_perf_stats_tests)
+
+  add_executable(mga2_ge_patch_math_tests EXCLUDE_FROM_ALL
+    ${PSP_RECOMP_DIR}/tools/tests/ge_patch_math_test.c)
+  target_include_directories(mga2_ge_patch_math_tests PRIVATE "${RT}")
+  target_compile_options(mga2_ge_patch_math_tests PRIVATE ${MGA2_FP_FLAGS})
+  add_test(NAME mga2_ge_patch_math COMMAND mga2_ge_patch_math_tests)
 
   add_executable(mga2_graphics_config_tests EXCLUDE_FROM_ALL
     ${PSP_RECOMP_DIR}/tools/tests/graphics_config_test.c

@@ -10,8 +10,14 @@ import unittest
 TOOLS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(TOOLS))
 
-from benchmark_arena import combine_results, require_arena_save
+from benchmark_arena import (
+    ARENA_CASES,
+    combine_results,
+    require_arena_save,
+    select_cases,
+)
 from benchmark_common import (
+    CLEARED_ENVIRONMENT,
     PerformanceThresholds,
     load_samples,
     parse_framebuffer_stats,
@@ -177,6 +183,28 @@ class BenchmarkCommonTests(unittest.TestCase):
         self.assertFalse(combined["passed"])
         self.assertEqual(combined["failures"], ["gameplay: slow"])
         json.dumps(combined)
+
+    def test_selects_fortune_without_changing_both(self) -> None:
+        self.assertEqual(
+            [case.name for case in select_cases("both")],
+            ["dead-cell", "gameplay"],
+        )
+        self.assertEqual(
+            [case.name for case in select_cases("all")],
+            ["dead-cell", "fortune", "gameplay"],
+        )
+        fortune = select_cases("fortune")
+        self.assertEqual([case.name for case in fortune], ["fortune"])
+        self.assertLess(fortune[0].start, 29_293)
+        self.assertEqual(fortune[0].required_present, 29_307)
+        self.assertGreater(fortune[0].exit_after, fortune[0].required_present)
+        self.assertEqual(tuple(case.name for case in ARENA_CASES), (
+            "dead-cell",
+            "fortune",
+            "gameplay",
+        ))
+        self.assertIn("SR_GE_SCALAR_SPLINE", CLEARED_ENVIRONMENT)
+        self.assertIn("SR_GE_SPLINE_LOG", CLEARED_ENVIRONMENT)
 
 
 if __name__ == "__main__":

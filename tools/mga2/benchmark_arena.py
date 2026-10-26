@@ -23,9 +23,23 @@ from benchmark_common import (
 
 ARENA_CASES = (
     BenchmarkCase("dead-cell", 27_900, 28_000, 28_800, 120),
+    BenchmarkCase("fortune", 29_280, 29_307, 30_000, 480),
     BenchmarkCase("gameplay", 37_900, 38_000, 38_800, 120),
 )
 DEFAULT_WINDOW = 120
+CASE_CHOICES = ("all", "both", *(case.name for case in ARENA_CASES))
+
+
+def select_cases(selection: str) -> tuple[BenchmarkCase, ...]:
+    if selection == "all":
+        return ARENA_CASES
+    if selection == "both":
+        return tuple(
+            case
+            for case in ARENA_CASES
+            if case.name in ("dead-cell", "gameplay")
+        )
+    return tuple(case for case in ARENA_CASES if case.name == selection)
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
@@ -72,7 +86,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     )
     parser.add_argument(
         "--case",
-        choices=("both", "dead-cell", "gameplay"),
+        choices=CASE_CHOICES,
         default="both",
     )
     parser.add_argument(
@@ -182,11 +196,7 @@ def main(argv: list[str]) -> int:
             maximum_gpu_ms=args.maximum_gpu_ms,
             maximum_readbacks=args.maximum_readbacks,
         )
-        selected = [
-            case
-            for case in ARENA_CASES
-            if args.case == "both" or args.case == case.name
-        ]
+        selected = select_cases(args.case)
         results: list[dict[str, object]] = []
         for case in selected:
             results.append(
