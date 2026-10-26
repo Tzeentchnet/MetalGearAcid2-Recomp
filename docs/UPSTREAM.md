@@ -37,7 +37,7 @@ repository.
 | P2 | Savedata | Secure savedata mode 4 is required by real North American saves | Keep decryption support and add synthetic create/reload coverage | Partially validated |
 | P2 | Profiling | Backend stage timers can remain small while guest/GE frontend work misses the frame budget | Split frontend samples into scheduler, native guest, GE list, vertex, and HLE phases | Open improvement |
 | P2 | Diagnostics | Queued GPU captures do not flush the final request on bounded exit | Drain or explicitly fail pending captures and report actual capture timing | Open improvement |
-| P3 | Vulkan | A high-resolution swapchain still renders the offscreen GE target at 512x272 | Scale Vulkan color/depth targets, feedback, and copies consistently | Open improvement |
+| P3 | Vulkan | A high-resolution swapchain still rendered the offscreen GE target at 512x272 | Scale Vulkan color/depth targets, feedback, copies, and presentation consistently | Validated implementation |
 
 ## 1. CPU execution and native dispatch
 
@@ -343,16 +343,19 @@ gate. A route reaching its exit presentation is not renderer correctness
 evidence. The same validation pass should cover presentation semaphore
 ownership and complete device-object teardown.
 
-### 3.7 Vulkan internal-resolution parity remains open
+### 3.7 Vulkan internal-resolution parity requires complete ownership scaling
 
-The Vulkan backend can present to a high-resolution swapchain and upload
-xBRZ-scaled textures, but its offscreen GE color and depth targets remain at
-the native 512x272 resolution. D3D12 scales color, depth, feedback, copies, and
-presentation together.
+The validated Vulkan implementation now honors the shared 1x-8x internal
+resolution. It scales color and depth attachments, destination and feedback
+snapshots, framebuffer-texture coordinates, scissors, block transfers,
+guest-memory upload/readback sampling, and the visible presentation region as
+one ownership model. Scaling only presentation or texture uploads did not
+reduce geometry aliasing and would have produced mismatched feedback
+coordinates.
 
-Upstream Vulkan scaling should be treated as a complete render-target ownership
-feature. Scaling only presentation or texture uploads cannot provide parity
-and risks mismatched feedback coordinates.
+Native-resolution pixel regression runs use an explicit `SR_VK_SCALE=1`
+override. Separate 4x scene and 8x boot runs complete with the Khronos
+validation layer enabled.
 
 ## 4. Diagnostics and regression infrastructure
 

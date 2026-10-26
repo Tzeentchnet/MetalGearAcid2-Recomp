@@ -346,6 +346,8 @@ fault, device loss, or host crash:
 |---|---|---|---|
 | Combined / D3D12 | 8x internal (3840x2176), 2x xBRZ, full-rate 1x1 shading | Authentic late-game save to Arena Easy | Clean exit at presentation 45000 |
 | Combined / Vulkan | Native GE target, 2x xBRZ | Same save and Arena input script | Clean exit at presentation 45000 |
+| Combined / Vulkan | 4x internal, 2x xBRZ | Dead Cell and Arena visual checkpoints | Clean exit at presentation 38001 with Khronos validation |
+| Combined / Vulkan | 8x internal, 2x xBRZ | Boot/front-end smoke | Clean exit at presentation 120 with Khronos validation |
 | Combined / D3D12 | 2x internal, 5x xBRZ | Boot/front-end smoke | Clean exit at presentation 120 |
 | Combined / Vulkan | Native GE target, 5x xBRZ | Boot/front-end smoke | Clean exit at presentation 120 |
 | Software-only / GDI | Native PSP resolution | Boot/front-end smoke | Clean exit at presentation 120 |
@@ -753,7 +755,19 @@ stage/player, map-preview, and card-UI regions. Against the software oracle:
 At 2x the Vulkan map-preview region is byte-identical to software. The
 visible main menu at presentation 8,000 also remains intact: its menu-panel
 region measures MAE 0.9269 and RMSE 5.2073 against software with validation
-enabled. The
+enabled.
+
+The initial Vulkan fix still ignored the shared `internal_resolution` setting,
+so a nominal 4x Vulkan profile rasterized its GE targets at native 512x272
+while D3D12 rasterized at 2048x1088. That produced visibly aliased model and
+geometry edges despite matching launcher settings. Vulkan now scales color,
+depth, destination and feedback snapshots, framebuffer-texture coordinates,
+scissors, block transfers, guest uploads/readbacks, and the visible
+presentation region together. A 4x route reaches both visual checkpoints and
+an 8x smoke reaches presentation 120 with validation enabled and no
+diagnostics. The native pixel gate explicitly sets `SR_VK_SCALE=1`.
+
+The
 Khronos validation pass also exposed a render-finished semaphore reused while
 presentation still owned it and thousands of intentionally leaked shutdown
 objects. Per-swapchain-image semaphores and complete backend teardown removed

@@ -19,10 +19,11 @@ separately from frame time.
 
 Vulkan now passes the software-referenced visual gate at the Dead Cell and
 Arena gameplay checkpoints, including the player, stage, and map preview. It
-is therefore a valid native-resolution visual control. It remains unsuitable
-for attributing D3D12 performance regressions because Vulkan still renders its
-GE targets at native resolution and uses a different synchronization model;
-performance comparisons must not treat those workloads as equivalent.
+also honors the same 1x-8x internal-resolution setting as D3D12. It remains
+unsuitable for attributing D3D12 performance regressions because its command
+submission, synchronization, destination-snapshot, and texture-cache models
+remain different; performance comparisons must not treat those workloads as
+equivalent without a separately calibrated Vulkan benchmark.
 
 The historical focused post-`/O2` measurements counted host flips, including
 repeated copies of the same guest frame. They therefore did not represent

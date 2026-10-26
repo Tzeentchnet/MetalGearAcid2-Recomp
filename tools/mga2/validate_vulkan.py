@@ -48,6 +48,7 @@ CLEARED_ENVIRONMENT = (
     "SR_MEMSTICK",
     "SR_NOVBPACE",
     "SR_PADSCRIPT",
+    "SR_VK_SCALE",
 )
 
 
@@ -294,6 +295,7 @@ def run_renderer(
     )
     if renderer == "vk":
         environment["SR_GPU_SAFE"] = "1"
+        environment["SR_VK_SCALE"] = "1"
     elif renderer == "d3d12":
         environment["SR_D3D12_SCALE"] = "1"
     command = [

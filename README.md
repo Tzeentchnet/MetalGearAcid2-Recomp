@@ -41,10 +41,10 @@ compiled in.
 
 For the highest-quality 4K path:
 
-1. Select **D3D12 hardware**.
+1. Select **D3D12 hardware** or **Vulkan**.
 2. Select **8x (3840x2176)** internal resolution.
 3. Select **2x xBRZ** or **3x xBRZ** texture upscaling.
-4. Select **Full resolution (best quality)** D3D12 shading.
+4. When using D3D12, select **Full resolution (best quality)** shading.
 5. Press **F11** in the game window for borderless desktop fullscreen.
 
 The PSP display is 480:272, so 8x is 3840x2176 rather than exactly 3840x2160.
@@ -54,14 +54,16 @@ display instead of stretching the image.
 | Renderer | Internal GE resolution | Texture scaling | Role |
 |---|---|---|---|
 | D3D12 | 1x-8x | 1x-5x xBRZ | Recommended high-resolution renderer |
-| Vulkan | Native 512x272 render region in a 512x512 texture envelope | 1x-5x xBRZ | Validated native-resolution hardware renderer |
+| Vulkan | 1x-8x | 1x-5x xBRZ | Validated high-resolution hardware renderer |
 | Software | Native PSP resolution | None | Pixel-exact reference baseline |
 
 xBRZ scales decoded game textures before hardware upload. It does not scale
-framebuffer/render-target textures, and higher factors can use substantially
-more GPU memory. The D3D12 **Balanced** shading option uses variable-rate
-shading on supported GPUs; **Full resolution** shades every internal-resolution
-fragment and is the appropriate quality setting for 4K screenshots.
+framebuffer/render-target textures; the separate internal-resolution setting
+scales those resources in both hardware renderers. Higher factors can use
+substantially more GPU memory. The D3D12 **Balanced** shading option uses
+variable-rate shading on supported GPUs; **Full resolution** shades every
+internal-resolution fragment and is the appropriate D3D12 setting for 4K
+screenshots.
 
 Settings are persisted in `graphics.ini` beside the executable. The equivalent
 keys are `renderer`, `internal_resolution`, `texture_scale`, and
