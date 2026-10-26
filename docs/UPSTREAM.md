@@ -30,6 +30,7 @@ repository.
 | P1 | Dynamic PRXs | Multiple overlays reuse one base and may modify code after activation | Generate identity-qualified dispatch tables with per-function byte guards and interpreter fallback | Validated implementation |
 | P1 | D3D12 feedback | 16-bit render targets can be sampled as CLUT16 index surfaces | Add strict GPU-resident framebuffer feedback for compatible layouts | Validated implementation |
 | P1 | D3D12 stencil | Some destination-independent PSP stencil operations need fixed-function depth ownership | Admit provably safe states to the direct path | Validated implementation |
+| P1 | Vulkan fragments | Route completion can hide black 3D scenes when destination-alpha stencil, blend, logic, and native masks are approximated | Split provably compatible direct state from an ordered destination color/depth snapshot shader path | Validated implementation |
 | P1 | Loader/HLE | Encrypted firmware modules can use either `~PSP` or `~SCE`, including raw-LBN paths | Route both signatures through the same exact identity policy | Validated implementation |
 | P1 | UMD I/O | The title depends on real asynchronous UMD ioctl seek behavior | Execute supported ioctls through the async worker; never return synthetic success | Validated implementation |
 | P2 | GE capture | Fixed vertex ceilings reject valid dense frames | Grow capture storage within explicit safety limits and spill through fenced upload slabs | Validated implementation |
@@ -319,7 +320,30 @@ slabs. Upstream behavior should remain all-or-error: never silently truncate a
 GE frame. Keep a regression at exactly 240,003 vertices so a future fixed
 allocation does not reintroduce the boundary.
 
-### 3.6 Vulkan internal-resolution parity remains open
+### 3.6 Vulkan needs an exact destination-aware fragment path
+
+The Vulkan backend accepted millions of Arena triangles while producing a
+black in-engine cinematic. Disabling culling, depth testing, depth-range
+discard, or alpha testing did not change the frame. The missing state was
+ordered destination behavior: PSP stencil lives in destination alpha, several
+blend modes consume destination values, and logic/native bit masks occur
+after blending and dithering.
+
+The validated design uses a conservative state classifier. Fixed-function
+Vulkan is allowed only when the complete PSP state is representable.
+Otherwise the backend snapshots RGBA8 color and D16 depth between GE draw
+identities and evaluates fragment tests, stencil/depth transitions, blend,
+dither, logic, native packing, write masks, and depth output in one shader.
+The push-constant layout is 112 bytes, below Vulkan's guaranteed 128-byte
+minimum.
+
+Upstream tests should independently mutate every direct-path admission rule,
+compile checked-in GLSL deterministically, and retain a title-level pixel
+gate. A route reaching its exit presentation is not renderer correctness
+evidence. The same validation pass should cover presentation semaphore
+ownership and complete device-object teardown.
+
+### 3.7 Vulkan internal-resolution parity remains open
 
 The Vulkan backend can present to a high-resolution swapchain and upload
 xBRZ-scaled textures, but its offscreen GE color and depth targets remain at

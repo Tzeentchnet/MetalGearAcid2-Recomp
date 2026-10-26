@@ -705,3 +705,58 @@ frame mix makes aggregate FPS insufficient by itself; matched workload
 counters, percentiles, and aligned GPU queries remain the optimization
 criteria. Runtime-only changes continue to use incremental targeted builds so
 the generated corpus is not rebuilt unnecessarily.
+
+## MGA2-F-019 - Vulkan required ordered destination fragment semantics
+
+**Status:** Fixed and visually validated
+
+The Vulkan route previously reached Arena presentation 45,000 without a
+device loss, but route completion was a false correctness signal. At
+presentation 28,000 the Dead Cell cinematic contained only the dark clear
+color, while presentation 38,000 retained card UI but omitted the player,
+stage, and map-preview rendering. The presentation-28,000 capture had a
+whole-frame mean absolute channel error of 21.2253 against software even
+though approximately 3.76 million triangles had reached the backend.
+
+Culling, depth testing, the min/max depth range, and alpha testing were
+independently disabled during the bisect without changing the black frame.
+The divergence was instead in fragment ownership: the backend approximated or
+ignored destination-alpha stencil, destination-dependent blend factors,
+logic operations, native bit write masks, dithering, and framebuffer
+feedback. Forcing whole-channel color writes changed the failure but could not
+preserve the PSP ordering, confirming that this was not missing geometry.
+
+The fixed Vulkan path now classifies each state before pipeline selection.
+Provably representable states retain fixed-function blending and depth.
+Everything else snapshots RGBA8 color and D16 depth, then evaluates the PSP
+fragment order in GLSL: texture combine, alpha/color tests, stencil
+fail/depth-fail/pass, depth testing, blending, dithering, logic operations,
+native framebuffer packing, bit masks, and depth preservation. A packed
+112-byte push-constant ABI stays within Vulkan's portable 128-byte guarantee.
+Destination-dependent batches merge only within one GE draw identity.
+
+Framebuffer color resources now retain a 512x512 sampling envelope while the
+writable and presented region remains 512x272. Depth address and stride are
+part of attachment ownership, overlapping GPU-newer aliases are materialized
+before decode, and compatible sibling/self feedback remains GPU-resident.
+
+The deterministic visual lane in `tools/mga2/validate_vulkan.py` captures
+presentations 28,000 and 38,000 and checks whole frames plus character,
+stage/player, map-preview, and card-UI regions. Against the software oracle:
+
+| Renderer/profile | Presentation 28000 MAE | Presentation 38000 MAE |
+|---|---:|---:|
+| Vulkan, 1x textures | 0.0379 | 0.1068 |
+| Vulkan, 2x xBRZ | 1.0100 | 1.3075 |
+| D3D12, native internal resolution / 2x xBRZ | 1.2704 | 2.6574 |
+
+At 2x the Vulkan map-preview region is byte-identical to software. The
+visible main menu at presentation 8,000 also remains intact: its menu-panel
+region measures MAE 0.9269 and RMSE 5.2073 against software with validation
+enabled. The
+Khronos validation pass also exposed a render-finished semaphore reused while
+presentation still owned it and thousands of intentionally leaked shutdown
+objects. Per-swapchain-image semaphores and complete backend teardown removed
+both errors. Final 1x and 2x scene runs use the same pixel gates with
+`SR_VK_VALIDATION=1`; successful execution without validation diagnostics is
+part of the acceptance result.

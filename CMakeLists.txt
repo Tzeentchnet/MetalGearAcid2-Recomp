@@ -72,6 +72,11 @@ if(MGA2_ENABLE_D3D12 OR MGA2_ENABLE_VULKAN)
   endif()
 endif()
 if(MGA2_ENABLE_VULKAN)
+  if(NOT EXISTS "${PSP_RECOMP_DIR}/src/rt/gpu_sdl3vk/shader_state.c" OR
+     NOT EXISTS "${PSP_RECOMP_DIR}/src/rt/gpu_sdl3vk/shader_state.h")
+    message(FATAL_ERROR
+      "Vulkan rendering requires the matching psp-recomp shader-state runtime")
+  endif()
   if(WIN32 AND NOT DEFINED Vulkan_ROOT AND "$ENV{VULKAN_SDK}" STREQUAL "")
     file(GLOB MGA2_VULKAN_SDKS LIST_DIRECTORIES TRUE "C:/VulkanSDK/*")
     list(SORT MGA2_VULKAN_SDKS COMPARE NATURAL ORDER DESCENDING)
@@ -226,7 +231,8 @@ endif()
 if(MGA2_ENABLE_VULKAN)
   list(APPEND MGA2_RUNTIME_SRCS
     ${RT}/gpu_sdl3vk/sdl3vk.c
-    ${RT}/gpu_sdl3vk/ge_gpu.c)
+    ${RT}/gpu_sdl3vk/ge_gpu.c
+    ${RT}/gpu_sdl3vk/shader_state.c)
 endif()
 if(MGA2_ENABLE_D3D12 OR MGA2_ENABLE_VULKAN)
   list(APPEND MGA2_RUNTIME_SRCS
@@ -357,5 +363,22 @@ if(BUILD_TESTING)
     target_compile_features(mga2_d3d12_vertex_tests PRIVATE cxx_std_17)
     target_compile_options(mga2_d3d12_vertex_tests PRIVATE ${MGA2_FP_FLAGS})
     add_test(NAME mga2_d3d12_vertex COMMAND mga2_d3d12_vertex_tests)
+  endif()
+
+  if(MGA2_ENABLE_VULKAN)
+    find_package(Python3 REQUIRED COMPONENTS Interpreter)
+    add_executable(mga2_vulkan_shader_state_tests EXCLUDE_FROM_ALL
+      ${PSP_RECOMP_DIR}/tools/tests/vulkan_shader_state_test.c
+      ${RT}/gpu_sdl3vk/shader_state.c)
+    target_include_directories(mga2_vulkan_shader_state_tests PRIVATE "${RT}")
+    target_compile_options(mga2_vulkan_shader_state_tests PRIVATE
+      ${MGA2_FP_FLAGS})
+    add_test(NAME mga2_vulkan_shader_state
+      COMMAND mga2_vulkan_shader_state_tests)
+    add_test(NAME mga2_vulkan_validator
+      COMMAND ${Python3_EXECUTABLE} -m unittest
+        tools.mga2.tests.test_validate_vulkan)
+    set_tests_properties(mga2_vulkan_validator PROPERTIES
+      WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
   endif()
 endif()

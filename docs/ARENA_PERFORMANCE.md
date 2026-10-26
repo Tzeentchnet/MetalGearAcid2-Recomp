@@ -17,11 +17,12 @@ diagnostics. The runtime currently caps `SR_PERF_WINDOW` at 600 samples.
 Each result records wall-clock duration so startup/iteration cost is visible
 separately from frame time.
 
-Vulkan is currently a diagnostic-only comparison backend, not an acceptance
-control. In the current Arena route it presents the UI but can omit the map
-and player scene, and its GPU synchronization path is substantially slower.
-Until that renderer correctness issue is isolated, Vulkan results must not be
-used to attribute D3D12 performance regressions.
+Vulkan now passes the software-referenced visual gate at the Dead Cell and
+Arena gameplay checkpoints, including the player, stage, and map preview. It
+is therefore a valid native-resolution visual control. It remains unsuitable
+for attributing D3D12 performance regressions because Vulkan still renders its
+GE targets at native resolution and uses a different synchronization model;
+performance comparisons must not treat those workloads as equivalent.
 
 The historical focused post-`/O2` measurements counted host flips, including
 repeated copies of the same guest frame. They therefore did not represent

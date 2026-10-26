@@ -54,7 +54,7 @@ display instead of stretching the image.
 | Renderer | Internal GE resolution | Texture scaling | Role |
 |---|---|---|---|
 | D3D12 | 1x-8x | 1x-5x xBRZ | Recommended high-resolution renderer |
-| Vulkan | Native 512x272 target | 1x-5x xBRZ | Alternate hardware renderer |
+| Vulkan | Native 512x272 render region in a 512x512 texture envelope | 1x-5x xBRZ | Validated native-resolution hardware renderer |
 | Software | Native PSP resolution | None | Pixel-exact reference baseline |
 
 xBRZ scales decoded game textures before hardware upload. It does not scale
@@ -253,3 +253,26 @@ and every failed gate.
 The current experiment history, rejected approaches, remaining bottlenecks,
 and ranked follow-up work are recorded in
 [`docs/ARENA_PERFORMANCE.md`](docs/ARENA_PERFORMANCE.md).
+
+## Vulkan visual validation
+
+Vulkan correctness is gated by rendered pixels rather than successful route
+completion. Run the completed-save visual lane with:
+
+```powershell
+python tools\mga2\validate_vulkan.py `
+  --memstick build\mga2\arena-d3d12-shadow-fix\memstick `
+  --include-d3d12
+```
+
+The command creates isolated software, Vulkan, and optional D3D12 memory-stick
+copies. It captures presentation 28,000 (Dead Cell cinematic) and presentation
+38,000 (Arena gameplay), then checks the whole frames and focused character,
+stage/player, map-preview, and card-UI regions. The dependency-free PPM metric
+gate uses the software renderer as its oracle and holds Vulkan to bounds
+calibrated against the native-resolution D3D12 cross-check.
+
+Use `--reference-dir`, `--vulkan-dir`, or `--d3d12-dir` to validate existing
+capture directories without rerunning those renderers. Set
+`SR_VK_VALIDATION=1` to require the Khronos validation layer and report Vulkan
+synchronization, layout, descriptor, and lifetime errors.

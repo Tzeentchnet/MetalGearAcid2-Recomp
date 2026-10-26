@@ -19,6 +19,10 @@
 - The default build exposes D3D12, Vulkan, and software renderers. D3D12
   supports 1x-8x internal rendering, both hardware backends support optional
   2x-5x xBRZ texture scaling, and F11 toggles desktop fullscreen.
+- Vulkan now renders the Dead Cell cinematic, Arena player/stage, and
+  upper-right map preview through exact destination-aware fragment state. Its
+  presentation-28000 and presentation-38000 captures pass the software image
+  gate at both 1x and 2x texture scale with Khronos validation enabled.
 - The deterministic opening-tutorial dialog benchmark sustains 60.44 displayed
   FPS at D3D12 4x internal resolution, 2x xBRZ, and full-rate shading.
 - Save-based D3D12 validation keeps the Dead Cell and Stage 01 visuals intact.
@@ -49,14 +53,14 @@
 | D3D12 save-scene performance | Partial | Stage 01: 59.79 FPS and 17.07 ms p95; Dead Cell: 48.45 FPS and 38.19 ms p95; Arena gameplay: 53.48 FPS and 32.54 ms p95 |
 | Arena optimization profile | Partial | Dead Cell diagnostic: 59.51 FPS and 17.67 ms p95, but `SR_GEDUMP` violates the readback gate; gameplay `/O2`: 46.83 FPS, 34.16 ms p95, 22.90 ms maximum GPU |
 | D3D12 cutscene depth/stencil | Pass | Fifty current GPU captures plus a 1920x1088 presentation-28000 capture keep the Dead Cell model and silhouette intact across presentations 27920-28040 |
-| Vulkan hardware backend | Pass | 2x xBRZ reaches Arena presentation 45000 on the native-resolution GE target |
+| Vulkan hardware backend | Pass | Presentations 28000/38000 render cinematic, player/stage, map preview, and UI; 2x whole-frame MAE is 1.0100/1.3075, 1x MAE is 0.0379/0.1068, and the final route reports no validation-layer errors |
 | Software graphics baseline | Pass | Software-only preset and GDI presenter reach presentation 120 |
 | Fullscreen toggle | Pass | F11 expands and restores both SDL3 hardware windows without device loss |
 | Native boot trace | Pass | Strict boot reaches multiple stage overlays and async/callback threads |
 | Native module policy | Pass | 3 core PRXs and 8 observed stage paths activate 10 exact native tables |
 | Native/interpreted differential | Pass | Byte-identical tutorial, Stage 01 briefing, and isolated Arena captures |
 | Exact font policy | Pass | Raw-LBN `libfont.prx` reaches `sceFontNewLib` and `sceFontFindOptimumFont` |
-| Front end | Pass | Deterministic captures reach the main menu |
+| Front end | Pass | Deterministic captures reach the main menu; Vulkan presentation 8000 matches the software menu panel at MAE 0.9269 / RMSE 5.2073 with validation enabled |
 | Scripted input | Pass | START/CIRCLE/CROSS sequence reaches New Game on Easy |
 | Initial gameplay | Pass | Strict software-renderer run advances through the opening movement tutorial |
 | Tutorial visual oracle | Pass | Independent PSP gameplay footage shows the same abstract floor atlas and geometry |
@@ -70,8 +74,10 @@ The current milestone is deterministic, input-driven native execution through
 the opening movement tutorial plus authentic-save coverage of Acid 1 import,
 intermission, the Stage 01 briefing, and Arena gameplay. Software remains the
 pixel-exact oracle; D3D12 now provides the validated high-resolution path and
-Vulkan provides an alternate native-resolution hardware path. The main module
-and ten exercised dynamic-module images are recompiled. Unconfigured plaintext
+Vulkan provides a validated native-resolution hardware path with exact
+destination color/depth snapshots and a 512x512 framebuffer texture envelope.
+The main module and ten exercised dynamic-module images are recompiled.
+Unconfigured plaintext
 PRXs and guarded runtime-modified functions retain strict interpreter fallback.
 Presentation-index differentials are exact in all three exercised gameplay
 lanes, and the fixed-quality D3D12 tutorial path sustains the 59.94 Hz display
