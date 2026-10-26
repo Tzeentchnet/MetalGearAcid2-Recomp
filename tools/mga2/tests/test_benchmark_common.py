@@ -21,7 +21,9 @@ from benchmark_common import (
     CLEARED_ENVIRONMENT,
     PerformanceThresholds,
     describe,
+    describe_delivery,
     load_samples,
+    parse_audio_stats,
     parse_framebuffer_stats,
     read_graphics_profile,
     split_alternation,
@@ -97,7 +99,10 @@ class BenchmarkCommonTests(unittest.TestCase):
             },
         ]
         summary = summarize(samples, 100)
-        self.assertAlmostEqual(float(summary["fps"]), 1000.0 / 15.0)
+        self.assertAlmostEqual(
+            float(summary["host_flip_fps"]), 1000.0 / 15.0
+        )
+        self.assertAlmostEqual(float(summary["delivered_fps"]), 50.0)
         self.assertEqual(summary["gpu_samples"], 1)
         self.assertEqual(summary["gpu_maximum_ms"], 8.0)
         self.assertEqual(
@@ -136,21 +141,49 @@ class BenchmarkCommonTests(unittest.TestCase):
             stats,
             {"readbacks": 3, "aliases": 4, "feedback_snapshots": 6},
         )
+        audio = parse_audio_stats(
+            "audio: XAudio2 shutdown played=44100 frames (1000.00 ms), "
+            "clock_drift=-2.50 ms, device_buffers=6..8, "
+            "max_guest_queue=8192, dropped=0, resynced=256, "
+            "silent_blocks=0, underruns=0, padding_blocks=4, "
+            "padding_transitions=1\n"
+        )
+        self.assertEqual(audio["audio_underruns"], 0)
+        self.assertFalse(audio["audio_voice_error"])
         summary = {
-            "fps": 58.0,
+            "host_flip_fps": 58.0,
+            "delivered_fps": 28.0,
             "p95_ms": 19.0,
             "maximum_ms": 40.0,
+            "delivered_p95_ms": 36.0,
+            "delivered_maximum_ms": 51.0,
             "gpu_maximum_ms": 20.0,
             **stats,
+            **audio,
         }
         failures = validate(summary, PerformanceThresholds())
-        self.assertEqual(len(failures), 4)
+        self.assertEqual(len(failures), 7)
         with self.assertRaisesRegex(ValueError, "statistics are missing"):
             parse_framebuffer_stats("no cache line")
         self.assertEqual(
             parse_framebuffer_stats("no cache line", required=False),
             {"readbacks": 0, "aliases": 0, "feedback_snapshots": 0},
         )
+        with self.assertRaisesRegex(ValueError, "Audio|audio"):
+            parse_audio_stats("no audio statistics")
+
+    def test_describes_delivered_frames_not_repeated_host_flips(self) -> None:
+        samples = [
+            {"present": 10.0, "frame_ms": 16.0},
+            {"present": 10.0, "frame_ms": 17.0},
+            {"present": 12.0, "frame_ms": 16.0},
+            {"present": 12.0, "frame_ms": 17.0},
+            {"present": 14.0, "frame_ms": 16.0},
+        ]
+        delivery = describe_delivery(samples)
+        self.assertEqual(delivery["delivered_frames"], 2)
+        self.assertEqual(delivery["repeated_host_flips"], 2)
+        self.assertAlmostEqual(delivery["delivered_fps"], 1000.0 / 33.0)
 
     def test_requires_complete_arena_save(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

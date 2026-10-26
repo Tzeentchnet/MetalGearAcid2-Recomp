@@ -97,6 +97,14 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         help="renderer used by the executable; Vulkan is diagnostic only",
     )
     parser.add_argument(
+        "--fast-forward",
+        action="store_true",
+        help=(
+            "turbo to the case warm-up point; diagnostic only because it "
+            "skips normal audio playback and changes cache/timing history"
+        ),
+    )
+    parser.add_argument(
         "--include-unpaced",
         action="store_true",
         help="also run non-gating SR_NOVBPACE=1 diagnostic samples",
@@ -164,9 +172,17 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
             "with no key list otherwise)"
         ),
     )
-    parser.add_argument("--minimum-fps", type=float, default=59.0)
+    parser.add_argument(
+        "--minimum-fps",
+        type=float,
+        default=59.0,
+        help="minimum host display-flip rate",
+    )
+    parser.add_argument("--minimum-delivered-fps", type=float, default=29.0)
     parser.add_argument("--maximum-p95-ms", type=float, default=18.0)
     parser.add_argument("--maximum-frame-ms", type=float, default=33.4)
+    parser.add_argument("--maximum-delivered-p95-ms", type=float, default=35.0)
+    parser.add_argument("--maximum-delivered-frame-ms", type=float, default=50.0)
     parser.add_argument("--maximum-gpu-ms", type=float, default=16.68)
     parser.add_argument("--maximum-readbacks", type=int, default=4)
     parser.add_argument("--timeout", type=float, default=600.0)
@@ -252,7 +268,11 @@ def main(argv: list[str]) -> int:
             raise ValueError("--fortune-extra-presents cannot be negative")
         extra_environment = build_extra_environment(args)
         # An alternating run is a paired diagnostic, not an acceptance run.
-        fixed_profile = not args.allow_nonstandard_profile and not args.alternate
+        fixed_profile = (
+            not args.allow_nonstandard_profile
+            and not args.alternate
+            and not args.fast_forward
+        )
         profile = read_graphics_profile(executable, required=None)
         expected = {
             "renderer": args.renderer,
@@ -277,8 +297,11 @@ def main(argv: list[str]) -> int:
         output.mkdir(parents=True, exist_ok=False)
         thresholds = PerformanceThresholds(
             minimum_fps=args.minimum_fps,
+            minimum_delivered_fps=args.minimum_delivered_fps,
             maximum_p95_ms=args.maximum_p95_ms,
             maximum_frame_ms=args.maximum_frame_ms,
+            maximum_delivered_p95_ms=args.maximum_delivered_p95_ms,
+            maximum_delivered_frame_ms=args.maximum_delivered_frame_ms,
             maximum_gpu_ms=args.maximum_gpu_ms,
             maximum_readbacks=args.maximum_readbacks,
         )
@@ -310,6 +333,7 @@ def main(argv: list[str]) -> int:
                     renderer=args.renderer,
                     tail_presents=case_tail,
                     validate_result=fixed_profile,
+                    fast_forward=args.fast_forward,
                     extra_environment=extra_environment,
                 )
             )
@@ -331,6 +355,7 @@ def main(argv: list[str]) -> int:
                         tail_presents=case_tail,
                         validate_result=False,
                         unpaced=True,
+                        fast_forward=args.fast_forward,
                         extra_environment=extra_environment,
                     )
                 )

@@ -23,20 +23,30 @@ and player scene, and its GPU synchronization path is substantially slower.
 Until that renderer correctness issue is isolated, Vulkan results must not be
 used to attribute D3D12 performance regressions.
 
-The latest focused post-`/O2` measurements, each with 120 host flips and a
-120-presentation tail, are:
+The historical focused post-`/O2` measurements counted host flips, including
+repeated copies of the same guest frame. They therefore did not represent
+gameplay FPS:
 
-| Case | FPS | p95 | Maximum | Maximum GPU | Result |
-|---|---:|---:|---:|---:|---|
-| Dead Cell introduction | 59.94 | 17.49 ms | 18.33 ms | 4.11 ms | Pass |
-| Fortune transition | 59.94 | 17.35 ms | 21.82 ms | 4.07 ms | Pass |
-| Arena gameplay | 49.58 | 33.37 ms | 34.30 ms | 11.31 ms | Fails FPS/p95/max |
+| Case | Host-flip FPS | Delivered FPS | Delivered p95 | Result |
+|---|---:|---:|---:|---|
+| Fortune transition | 59.94 | 36.11 | 33.81 ms | Historical run; not valid for acceptance |
+| Arena gameplay | 49.58 | 30.79 | 34.47 ms | Historical run; not valid for acceptance |
 
-The gameplay run's frontend averaged 18.12 ms, with 8.66 ms in scheduler
-work, 4.53 ms in vertex processing, and 2.87 ms in synchronization. This
-points to a remaining gameplay CPU/frame-pacing bottleneck rather than the
-Fortune spline regression; the `/O2` change restored Fortune patch evaluation
-to 3.86 ms average.
+The old harness also fast-forwarded to the sample, suppressing XAudio2 until
+the warm-up point and changing cache and timing history. Acceptance now starts
+and plays the route in real time, reports host-flip and newly delivered guest
+frame rates separately, and fails on XAudio2 dropped frames, underruns, excess
+padding transitions, or voice errors. `--fast-forward` remains available only
+for diagnostics and cannot produce an acceptance pass.
+
+The first corrected full-route Fortune run
+(`out\benchmarks\arena-delivery-realtime`) measured 59.94 host flips/s but
+30.99 newly delivered frames/s. Delivered-frame p95 was 33.37 ms and the
+maximum was 34.76 ms. Continuous XAudio2 playback covered 196.97 seconds with
+zero dropped frames, underruns, extra padding transitions, or voice errors.
+This establishes that the former 59.94 result was refresh cadence, not game
+FPS, while this run's Fortune segment maintained a stable approximately
+30 FPS delivery cadence.
 
 ## Acceptance contract
 
@@ -66,17 +76,24 @@ The Fortune transition is an explicit third case so the historical meaning of
 | Vamp-to-Fortune transition | 29,280 | 29,307 | 30,000 | 480 guest presentations |
 
 Use `--case fortune` for its focused gate or `--case all` for all three cases.
-Each case measures 120 actual host flips. Acceptance uses the production paced
-path and the following fixed profile:
+Each case measures 120 host flips and derives delivered-frame intervals from
+changes in the guest presentation associated with each flip. Acceptance uses
+the production paced path, full real-time startup and audio playback, and the
+following fixed profile:
 
 - D3D12 renderer;
 - 4x internal resolution;
 - 2x xBRZ texture scaling;
 - full-rate 1x1 shading;
 - at least 59 displayed FPS;
+- at least 29 newly delivered game frames per second;
 - p95 no greater than 18 ms;
 - no frame above 33.4 ms;
+- delivered-frame p95 no greater than 35 ms;
+- no delivered frame above 50 ms;
 - no GPU sample above 16.68 ms;
+- no audio drops, underruns, excess post-startup padding transitions, or
+  XAudio2 voice errors;
 - at most four cumulative framebuffer readbacks; and
 - nonzero framebuffer aliases and ordered feedback snapshots.
 

@@ -55,10 +55,15 @@ ALTERNATE_TRANSITION_BIT = 0x80000000
 @dataclass(frozen=True)
 class PerformanceThresholds:
     minimum_fps: float = 59.0
+    minimum_delivered_fps: float = 29.0
     maximum_p95_ms: float = 18.0
     maximum_frame_ms: float = 33.4
+    maximum_delivered_p95_ms: float = 35.0
+    maximum_delivered_frame_ms: float = 50.0
     maximum_gpu_ms: float = 16.68
     maximum_readbacks: int = 4
+    maximum_audio_underruns: int = 0
+    maximum_audio_padding_transitions: int = 1
 
 
 @dataclass(frozen=True)
@@ -170,7 +175,7 @@ def describe(samples: list[dict[str, float]]) -> dict[str, float]:
     average = sum(frames) / len(frames)
     return {
         "samples": len(samples),
-        "fps": 1000.0 / average,
+        "host_flip_fps": 1000.0 / average,
         "average_ms": average,
         "p50_ms": percentile(frames, 0.50),
         "p95_ms": percentile(frames, 0.95),
@@ -179,6 +184,46 @@ def describe(samples: list[dict[str, float]]) -> dict[str, float]:
         / len(samples),
         "backend_average_ms": sum(s["backend_ms"] for s in samples)
         / len(samples),
+    }
+
+
+def describe_delivery(samples: list[dict[str, float]]) -> dict[str, float | int]:
+    """Describe newly delivered guest frames rather than repeated host flips."""
+    if len(samples) < 2:
+        raise ValueError("cannot describe delivery with fewer than two samples")
+    intervals: list[float] = []
+    elapsed_ms = 0.0
+    repeated_flips = 0
+    previous_present = int(samples[0]["present"])
+    for sample in samples[1:]:
+        elapsed_ms += sample["frame_ms"]
+        present = int(sample["present"])
+        if present == previous_present:
+            repeated_flips += 1
+            continue
+        intervals.append(elapsed_ms)
+        elapsed_ms = 0.0
+        previous_present = present
+    if not intervals:
+        return {
+            "delivered_frames": 0,
+            "repeated_host_flips": repeated_flips,
+            "delivered_fps": 0.0,
+            "delivered_average_ms": -1.0,
+            "delivered_p50_ms": -1.0,
+            "delivered_p95_ms": -1.0,
+            "delivered_maximum_ms": -1.0,
+        }
+    sorted_intervals = sorted(intervals)
+    average = sum(intervals) / len(intervals)
+    return {
+        "delivered_frames": len(intervals),
+        "repeated_host_flips": repeated_flips,
+        "delivered_fps": 1000.0 / average,
+        "delivered_average_ms": average,
+        "delivered_p50_ms": percentile(sorted_intervals, 0.50),
+        "delivered_p95_ms": percentile(sorted_intervals, 0.95),
+        "delivered_maximum_ms": sorted_intervals[-1],
     }
 
 
@@ -252,7 +297,7 @@ def summarize(
         "first_present": first_present,
         "last_present": last_present,
         "required_present": required_present,
-        "fps": 1000.0 / average,
+        "host_flip_fps": 1000.0 / average,
         "average_ms": average,
         "p50_ms": percentile(frames, 0.50),
         "p95_ms": percentile(frames, 0.95),
@@ -272,6 +317,7 @@ def summarize(
         "gpu_maximum_ms": max(gpu_values) if gpu_values else -1.0,
         "gpu_samples": len(gpu_values),
         "extra_metrics": extra_metrics,
+        **describe_delivery(samples),
     }
 
 
@@ -301,21 +347,73 @@ def parse_framebuffer_stats(
     }
 
 
+def parse_audio_stats(stderr: str) -> dict[str, object]:
+    matches = re.findall(
+        r"audio: XAudio2 shutdown played=(\d+) frames "
+        r"\(([-+0-9.]+) ms\), clock_drift=([-+0-9.]+) ms, "
+        r"device_buffers=(\d+)\.\.(\d+), max_guest_queue=(\d+), "
+        r"dropped=(\d+), resynced=(\d+), silent_blocks=(\d+), "
+        r"underruns=(\d+), padding_blocks=(\d+), "
+        r"padding_transitions=(\d+)(, voice_error)?",
+        stderr,
+    )
+    if not matches:
+        raise ValueError("XAudio2 shutdown statistics are missing")
+    (
+        played_frames,
+        played_ms,
+        clock_drift_ms,
+        minimum_device_buffers,
+        maximum_device_buffers,
+        maximum_guest_queue,
+        dropped_frames,
+        resynced_frames,
+        silent_blocks,
+        underruns,
+        padding_blocks,
+        padding_transitions,
+        voice_error,
+    ) = matches[-1]
+    return {
+        "audio_played_frames": int(played_frames),
+        "audio_played_ms": float(played_ms),
+        "audio_clock_drift_ms": float(clock_drift_ms),
+        "audio_minimum_device_buffers": int(minimum_device_buffers),
+        "audio_maximum_device_buffers": int(maximum_device_buffers),
+        "audio_maximum_guest_queue": int(maximum_guest_queue),
+        "audio_dropped_frames": int(dropped_frames),
+        "audio_resynced_frames": int(resynced_frames),
+        "audio_silent_blocks": int(silent_blocks),
+        "audio_underruns": int(underruns),
+        "audio_padding_blocks": int(padding_blocks),
+        "audio_padding_transitions": int(padding_transitions),
+        "audio_voice_error": bool(voice_error),
+    }
+
+
 def validate(
     summary: dict[str, object],
     thresholds: PerformanceThresholds,
 ) -> list[str]:
     failures: list[str] = []
-    fps = float(summary["fps"])
+    fps = float(summary["host_flip_fps"])
+    delivered_fps = float(summary["delivered_fps"])
     p95_ms = float(summary["p95_ms"])
     maximum_ms = float(summary["maximum_ms"])
+    delivered_p95_ms = float(summary["delivered_p95_ms"])
+    delivered_maximum_ms = float(summary["delivered_maximum_ms"])
     gpu_maximum_ms = float(summary["gpu_maximum_ms"])
     readbacks = int(summary["readbacks"])
     aliases = int(summary["aliases"])
     feedback_snapshots = int(summary["feedback_snapshots"])
     if fps < thresholds.minimum_fps:
         failures.append(
-            f"FPS {fps:.2f} is below {thresholds.minimum_fps:.2f}"
+            f"host flip FPS {fps:.2f} is below {thresholds.minimum_fps:.2f}"
+        )
+    if delivered_fps < thresholds.minimum_delivered_fps:
+        failures.append(
+            f"delivered FPS {delivered_fps:.2f} is below "
+            f"{thresholds.minimum_delivered_fps:.2f}"
         )
     if p95_ms > thresholds.maximum_p95_ms:
         failures.append(
@@ -326,6 +424,18 @@ def validate(
         failures.append(
             f"maximum frame {maximum_ms:.2f} ms exceeds "
             f"{thresholds.maximum_frame_ms:.2f} ms"
+        )
+    if delivered_p95_ms < 0.0:
+        failures.append("delivered frame timing samples are missing")
+    elif delivered_p95_ms > thresholds.maximum_delivered_p95_ms:
+        failures.append(
+            f"delivered p95 {delivered_p95_ms:.2f} ms exceeds "
+            f"{thresholds.maximum_delivered_p95_ms:.2f} ms"
+        )
+    if delivered_maximum_ms > thresholds.maximum_delivered_frame_ms:
+        failures.append(
+            f"maximum delivered frame {delivered_maximum_ms:.2f} ms exceeds "
+            f"{thresholds.maximum_delivered_frame_ms:.2f} ms"
         )
     if gpu_maximum_ms < 0.0:
         failures.append("GPU timing samples are missing")
@@ -343,6 +453,26 @@ def validate(
         failures.append("no framebuffer texture aliases were used")
     if feedback_snapshots <= 0:
         failures.append("no framebuffer feedback snapshots were used")
+    if int(summary["audio_dropped_frames"]) > 0:
+        failures.append(
+            f"audio dropped {int(summary['audio_dropped_frames'])} frames"
+        )
+    if int(summary["audio_underruns"]) > thresholds.maximum_audio_underruns:
+        failures.append(
+            f"{int(summary['audio_underruns'])} audio underruns exceed "
+            f"{thresholds.maximum_audio_underruns}"
+        )
+    if (
+        int(summary["audio_padding_transitions"])
+        > thresholds.maximum_audio_padding_transitions
+    ):
+        failures.append(
+            f"{int(summary['audio_padding_transitions'])} audio padding "
+            f"transitions exceed "
+            f"{thresholds.maximum_audio_padding_transitions}"
+        )
+    if bool(summary["audio_voice_error"]):
+        failures.append("XAudio2 reported a voice error")
     return failures
 
 
@@ -363,6 +493,7 @@ def run_benchmark_case(
     tail_presents: int = 0,
     validate_result: bool = True,
     unpaced: bool = False,
+    fast_forward: bool = False,
     extra_environment: dict[str, str] | None = None,
 ) -> dict[str, object]:
     output.mkdir(parents=True, exist_ok=False)
@@ -385,15 +516,16 @@ def run_benchmark_case(
             "SR_INPUT_CONFIG": "0",
             "SR_INPUT_HOT_RELOAD": "0",
             "SR_PADSCRIPT": str(pad_script),
-            "SR_FAST_FORWARD_PRESENT": str(
-                max(0, case.start - case.warmup_presentations)
-            ),
             "SR_PERF_START": str(case.start),
             "SR_PERF_WINDOW": str(window),
             "SR_PERF_FILE": str(perf_path),
             "SR_EXIT_AFTER_PRESENT": str(case.exit_after + tail_presents),
         }
     )
+    if fast_forward:
+        environment["SR_FAST_FORWARD_PRESENT"] = str(
+            max(1, case.start - case.warmup_presentations)
+        )
     if renderer == "d3d12":
         environment.update(
             {
@@ -447,10 +579,12 @@ def run_benchmark_case(
     summary.update(
         parse_framebuffer_stats(stderr_text, required=renderer == "d3d12")
     )
+    summary.update(parse_audio_stats(stderr_text))
     summary.update(
         {
             "case": case.name,
             "mode": "unpaced" if unpaced else "paced",
+            "startup": "fast-forward" if fast_forward else "real-time",
             "renderer": renderer,
             "wall_seconds": wall_seconds,
             "tail_presents": tail_presents,
