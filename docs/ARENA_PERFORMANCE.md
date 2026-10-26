@@ -662,6 +662,28 @@ measured windows.
   window, and presentation 38,542 shows 14.8 ms of scheduler idle with little work.
   Both are pacing or HLE events rather than render cost.
 
+**Begin-stall attribution (branches `test/stall-trace-begin-stall` and psp-recomp `test/begin-stall-attribution`)**
+
+- With `SR_D3D12_STAGE_LOG=1` the backend now prints a `slow begin` line (over 4 ms)
+  that splits `begin` into input poll, swapchain resize, frame-fence wait and the rest.
+  In the gameplay lead-in the 5-9 ms `begin` stalls are entirely the frame-fence wait
+  (`fence_wait`, with one frame still outstanding); poll, resize, allocator reset and
+  descriptor setup are each under 0.2 ms. A second, rarer source is the SDL input poll
+  (6-43 ms, far from the gameplay window). The stage log itself perturbs the run (one
+  trace run fell to 43 FPS), so use it for attribution only.
+- The fence wait is on a frame whose GPU time is at most 11 ms, so the extra wait is
+  outside the timestamped span: most likely the queue waiting for DWM to release a
+  back buffer under windowed flip-model `Present(0, 0)` on a 59 Hz display.
+- `SR_D3D12_TEARING=1` (default off) creates the swapchain with allow-tearing and presents
+  with `DXGI_PRESENT_ALLOW_TEARING`. Result: **inconclusive**. Three paired gameplay runs
+  gave baseline 57.5/59.4/59.9 FPS and tearing 43.5/59.9/59.0 FPS (maximum frame 33.4 ms
+  in two of three runs on both sides, and 82 ms in one tearing run). Host noise is larger
+  than the effect. An earlier set of runs that looked like a clear win was invalid: the
+  swapchain edit had not applied, so both arms were the same code.
+- Next: a longer interleaved A/B (the harness `--alternate` cannot toggle swapchain
+  flags), a waitable swapchain with frame latency 1 as a second candidate, and the
+  cold-start decode wait and 31.5 ms HLE call still untouched.
+
 **Deliberately not done**
 
 - *Native fast paths* (Yakumo's `register_native_fast_path`) need a measured hot guest
