@@ -33,6 +33,11 @@ if(MGA2_ENABLE_D3D12 OR MGA2_ENABLE_VULKAN)
     message(FATAL_ERROR
     "Hardware rendering requires psp-recomp commit 3de8644 or newer")
   endif()
+  if(MGA2_ENABLE_D3D12 AND
+     NOT EXISTS "${PSP_RECOMP_DIR}/src/rt/gpu_d3d12/smaa.cpp")
+    message(FATAL_ERROR
+      "D3D12 rendering requires psp-recomp commit dca4a7c or newer")
+  endif()
   find_package(SDL3 CONFIG QUIET COMPONENTS SDL3-shared)
   if(NOT SDL3_FOUND)
     if(NOT MGA2_FETCH_SDL3)
@@ -223,6 +228,7 @@ if(MGA2_ENABLE_D3D12)
     ${RT}/gpu_d3d12/pipeline_key.cpp
     ${RT}/gpu_d3d12/present.cpp
     ${RT}/gpu_d3d12/present_layout.cpp
+    ${RT}/gpu_d3d12/smaa.cpp
     ${RT}/gpu_d3d12/shader_state.cpp
     ${RT}/gpu_d3d12/texture.cpp
     ${RT}/gpu_d3d12/texture_key.cpp

@@ -45,17 +45,24 @@ For the highest-quality 4K path:
 2. Select **8x (3840x2176)** internal resolution.
 3. Select **2x xBRZ** or **3x xBRZ** texture upscaling.
 4. When using D3D12, select **Full resolution (best quality)** shading.
-5. Press **F11** in the game window for borderless desktop fullscreen.
+5. Optionally select **SMAA 1x High** for additional edge smoothing on D3D12.
+6. Press **F11** in the game window for borderless desktop fullscreen.
 
 The PSP display is 480:272, so 8x is 3840x2176 rather than exactly 3840x2160.
 Presentation preserves that aspect ratio and adds a few black pixels on a UHD
 display instead of stretching the image.
 
-| Renderer | Internal GE resolution | Texture scaling | Role |
-|---|---|---|---|
-| D3D12 | 1x-8x | 1x-5x xBRZ | Recommended high-resolution renderer |
-| Vulkan | 1x-8x | 1x-5x xBRZ | Validated high-resolution hardware renderer |
-| Software | Native PSP resolution | None | Pixel-exact reference baseline |
+| Renderer | Internal GE resolution | Texture scaling | Post-process AA | Role |
+|---|---|---|---|---|
+| D3D12 | 1x-8x | 1x-5x xBRZ | Off / SMAA 1x High | Recommended high-resolution renderer |
+| Vulkan | 1x-8x | 1x-5x xBRZ | None | Validated high-resolution hardware renderer |
+| Software | Native PSP resolution | None | None | Pixel-exact reference baseline |
+
+> [!NOTE]
+> Vulkan currently trails D3D12 in performance. For smoother gameplay, use a
+> lower internal resolution and texture-scaling factor than the 4K settings
+> above, then increase them only when your system has enough performance
+> headroom.
 
 xBRZ scales decoded game textures before hardware upload. It does not scale
 framebuffer/render-target textures; the separate internal-resolution setting
@@ -67,7 +74,7 @@ screenshots.
 
 Settings are persisted in `graphics.ini` beside the executable. The equivalent
 keys are `renderer`, `internal_resolution`, `texture_scale`, and
-`d3d12_full_rate`.
+`d3d12_full_rate`; `anti_aliasing` accepts `off` or `smaa`.
 
 ## Requirements
 
@@ -77,7 +84,7 @@ keys are `renderer`, `internal_resolution`, `texture_scale`, and
 - Visual Studio 2022 Build Tools with clang-cl and a Windows SDK
 - Vulkan SDK when building the default Vulkan backend. A standard
   `C:\VulkanSDK\<version>` install is detected automatically.
-- `psp-recomp` commit `3de8644` or newer at `D:\Github\psp-recomp`, or pass
+- `psp-recomp` commit `dca4a7c` or newer at `D:\Github\psp-recomp`, or pass
   another `PSP_RECOMP_DIR` to CMake and `--toolkit` to the generator
 
 The default preset downloads the pinned SDL3 3.2.20 VC development package
