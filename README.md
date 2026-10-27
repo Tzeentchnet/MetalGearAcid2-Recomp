@@ -64,10 +64,11 @@ display instead of stretching the image.
 | Software | Native PSP resolution | None | None | Pixel-exact reference baseline |
 
 > [!NOTE]
-> Vulkan currently trails D3D12 in performance. For smoother gameplay, use a
-> lower internal resolution and texture-scaling factor than the 4K settings
-> above, then increase them only when your system has enough performance
-> headroom.
+> For smoother gameplay, use a lower internal resolution and texture-scaling
+> factor than the 4K settings above, then increase them only when your system
+> has enough performance headroom. Higher internal resolution sharpens geometry
+> and can show more detail from your high-resolution card replacements. It
+> cannot restore detail missing from the original low-resolution textures.
 
 xBRZ scales decoded game textures before hardware upload. It does not scale
 framebuffer/render-target textures; the separate internal-resolution setting
