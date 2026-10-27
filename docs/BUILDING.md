@@ -80,3 +80,22 @@ ctest --test-dir out\build\clang-cl --output-on-failure -R "^mga2_"
 The software-only preset omits the texture-scaler, D3D12, and Vulkan targets.
 Neither source-only tests nor these native unit tests establish gameplay or
 renderer compatibility.
+
+### Startup shortcut and Arena regression
+
+The optional D3D12 integration tests need the supported ISO, a built executable,
+and a completed-save memory-stick root containing `PSP\SAVEDATA\ULUS10077003`:
+
+```powershell
+$env:MGA2_STARTUP_TEST_MEMSTICK = "C:\path\to\memory-stick"
+$env:MGA2_STARTUP_TEST_EXE = "out\build\clang-cl\mga2.exe"
+python -m unittest -v tools.mga2.tests.test_startup_shortcut
+```
+
+By default the ISO is `Metal Gear Acid 2 (USA).iso` in the repository root;
+set `MGA2_STARTUP_TEST_ISO` to use another path. The tests use temporary
+graphics settings and memory-stick copies, including an empty stick. They
+check the automatic startup input and main menu, then verify the Arena save
+load, stage load, and rendered output with the shortcut both on and off.
+The Arena replays include START pulses because scripted input replaces the
+runtime's automatic startup input.

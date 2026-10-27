@@ -256,7 +256,6 @@ endif()
 add_executable(mga2_driver
   ${RT}/driver.c
   tools/mga2/module_policy.c
-  tools/mga2/startup_skip.c
   ${MGA2_RUNTIME_SRCS})
 target_include_directories(mga2_driver PRIVATE "${RT}")
 target_compile_features(mga2_driver PRIVATE cxx_std_17)
@@ -283,13 +282,12 @@ target_compile_definitions(mga2_driver PRIVATE
   SR_MODULE_START_ATTR=0u
   SR_MODULE_POLICY_INIT=sr_mga2_register_module_policy
   SR_INITIAL_GE_LIST_ID=0
-  SR_SKIP_STARTUP_PRESENT=800u
+  SR_SKIP_STARTUP_PRESENT=4000u
   SR_SKIP_STARTUP_INPUT_START=60u
-  SR_SKIP_STARTUP_INPUT_END=650u
+  SR_SKIP_STARTUP_INPUT_END=4000u
   SR_SKIP_STARTUP_INPUT_PERIOD=60u
   SR_SKIP_STARTUP_INPUT_WIDTH=4u
   SR_SKIP_STARTUP_INPUT_MASK=0x0008u
-  SR_SKIP_STARTUP_HOOK=sr_mga2_skip_startup_tick
   SR_ENABLE_KZL_TWIN_STICK=0)
 if(CMAKE_C_SIMULATE_ID STREQUAL "MSVC")
   target_compile_options(mga2_driver PRIVATE /clang:-Wno-macro-redefined)

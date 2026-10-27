@@ -95,7 +95,6 @@ module = "mgp_stage"
 sha1 = "a21def8fe88964caf4ddafeb10000301796fcc5e"
 base = 0x09a0b500
 symbol_prefix = "mga2_stage_title"
-overrides = "config/mga2_stage_title_overrides.toml"
 
 [[native_module]]
 file = "PSP_GAME/USRDIR/stage/tu0000/tu0000.prx"

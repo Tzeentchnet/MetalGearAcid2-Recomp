@@ -77,9 +77,9 @@ screenshots.
 ## Startup shortcut
 
 Enable **Skip startup sequence (go directly to main menu)** in the launcher
-to execute the normal memory-stick checks and title initialization at turbo
-speed, then transition directly to the menu without playing the opening logos.
-The option is disabled by default and does not bypass save initialization.
+to run the normal startup sequence at turbo speed and automatically press
+START to reach the main menu. Opening logos may appear briefly. The option is
+disabled by default and does not bypass memory-stick or title initialization.
 
 ## Settings
 
