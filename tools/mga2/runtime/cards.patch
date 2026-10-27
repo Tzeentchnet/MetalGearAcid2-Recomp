@@ -1,0 +1,529 @@
+diff --git a/src/rt/ge.c b/src/rt/ge.c
+--- a/src/rt/ge.c
++++ b/src/rt/ge.c
+@@ -22,6 +22,7 @@
+ #include "recomp.h"
+ #include "ge_patch_math.h"
+ #include "ge_shared.h"
++#include "card_mods.h"
+ #include "graphics_config.h"
+ #include "outline_policy.h"
+ #include "perf_stats.h"
+@@ -1015,6 +1016,8 @@
+     return dxt_decode(bytes, format, u, v);
+ }
+ 
++static const SrMGA2CardMod *s_card_texture;
++
+ static void sample_tex_level(int level, int tu, int tv,
+                              int *r, int *g, int *b, int *a) {
+     g_tex_samples++;
+@@ -1026,6 +1029,17 @@
+         tv = tex_coord(tv, height, (ge.tex_wrap >> 8) & 1);
+     }
+     uint32_t u = (uint32_t)tu, v = (uint32_t)tv;
++    uint32_t replacement;
++    if (level == 0 && s_card_texture &&
++        sr_mga2_card_mod_sample(s_card_texture, u, v, &replacement)) {
++        *r = replacement & 0xff;
++        *g = (replacement >> 8) & 0xff;
++        *b = (replacement >> 16) & 0xff;
++        *a = replacement >> 24;
++        if (*r | *g | *b) g_tex_nonzero++;
++        if (s_stat_on > 0 && *a == 0) s_stat.texa0++;
++        return;
++    }
+     switch (ge.tex_fmt) {
+         case 0: case 1: case 2:
+             unpack_color(MEM_R16(address + texel_offset(
+@@ -1081,6 +1095,7 @@
+ static uint32_t s_texel_cache_generation = 1;
+ 
+ static void texel_cache_begin(void) {
++    s_card_texture = sr_mga2_card_mod_find(&ge);
+     s_texel_cache_generation++;
+     if (!s_texel_cache_generation) {
+         memset(s_texel_cache, 0, sizeof(s_texel_cache));
+diff --git a/src/rt/gpu_d3d12/texture.cpp b/src/rt/gpu_d3d12/texture.cpp
+--- a/src/rt/gpu_d3d12/texture.cpp
++++ b/src/rt/gpu_d3d12/texture.cpp
+@@ -3,6 +3,7 @@
+ #include "device.h"
+ 
+ extern "C" {
++#include "card_mods.h"
+ #include "../graphics_config.h"
+ #include "../perf_stats.h"
+ #include "../recomp.h"
+@@ -30,12 +31,15 @@
+  * SR_D3D12_VERIFY_TEXTURE_DECODE=1 decodes every texture both ways and aborts on a difference. */
+ struct DecodeJob {
+     GeTexSnapshot *snapshot;
++    const SrMGA2CardMod *card;
+     uint32_t *pixels;            /* the entry's buffer; written by the worker */
+     uint32_t *verify;            /* live-decoded copy for the verify mode, else null */
+     uint32_t level_count;
+     uint32_t scale;
+     uint32_t width[GE_D3D12_TEXTURE_LEVELS];
+     uint32_t height[GE_D3D12_TEXTURE_LEVELS];
++    uint32_t output_width[GE_D3D12_TEXTURE_LEVELS];
++    uint32_t output_height[GE_D3D12_TEXTURE_LEVELS];
+     uint32_t offset[GE_D3D12_TEXTURE_LEVELS];
+     uint32_t pixel_count;
+     DecodeJob *next;
+@@ -47,6 +51,7 @@
+ 
+ struct TextureEntry {
+     GeD3D12TextureKey key;
++    const SrMGA2CardMod *card;
+     uint64_t key_hash;
+     uint64_t quick_hash;
+     uint64_t content_hash;
+@@ -55,7 +60,10 @@
+     uint64_t verified_generation;
+     uint64_t descriptor_generation;
+     uint32_t serial;
++    uint32_t scale;
+     uint32_t pixel_offset[GE_D3D12_TEXTURE_LEVELS];
++    uint32_t output_width[GE_D3D12_TEXTURE_LEVELS];
++    uint32_t output_height[GE_D3D12_TEXTURE_LEVELS];
+     uint32_t pixel_count;
+     uint32_t *pixels;
+     DecodeJob *job;
+@@ -304,7 +312,8 @@
+ static bool decode_levels(
+     GeTexSnapshot *snapshot, uint32_t level_count, uint32_t scale,
+     const uint32_t *width, const uint32_t *height, const uint32_t *offset,
+-    uint32_t *pixels) {
++    const uint32_t *output_width, const uint32_t *output_height,
++    uint32_t *pixels, const SrMGA2CardMod *card) {
+     uint32_t *decoded = nullptr;
+     if (scale > 1u) {
+         uint64_t decoded_bytes =
+@@ -322,6 +331,16 @@
+         uint32_t *target = scale == 1u ? destination : decoded;
+         if (snapshot) ge_tex_snapshot_decode_level(snapshot, target, (int)level);
+         else ge_decode_tex_rgba_level(target, (int)level);
++        if (card) {
++            if (!sr_mga2_card_mod_compose(
++                    card, target, width[level], height[level], scale, level,
++                    output_width[level], output_height[level], destination)) {
++                fprintf(stderr, "ged3d12: card replacement composition failed\n");
++                free(decoded);
++                return false;
++            }
++            continue;
++        }
+         if (scale == 1u) continue;
+         if (!sr_texture_scale_rgba(
+                 decoded, width[level], height[level], scale, destination)) {
+@@ -337,7 +356,8 @@
+ static void pool_run(DecodeJob *job) {
+     job->ok = decode_levels(
+         job->snapshot, job->level_count, job->scale,
+-        job->width, job->height, job->offset, job->pixels);
++        job->width, job->height, job->offset, job->output_width,
++        job->output_height, job->pixels, job->card);
+     job->done.store(true, std::memory_order_release);
+ }
+ 
+@@ -439,9 +459,19 @@
+         scratch.width[level] = entry->key.width[level];
+         scratch.height[level] = entry->key.height[level];
+         scratch.offset[level] = (uint32_t)pixel_count;
+-        pixel_count +=
+-            (uint64_t)entry->key.width[level] * s_texture_scale *
+-            (uint64_t)entry->key.height[level] * s_texture_scale;
++        uint32_t output_width = entry->key.width[level] * entry->scale;
++        uint32_t output_height = entry->key.height[level] * entry->scale;
++        if (entry->card) {
++            if (!sr_mga2_card_mod_mip_dimensions(
++                    entry->key.width[0], entry->key.height[0], entry->scale,
++                    level, &output_width, &output_height)) {
++                fprintf(stderr, "ged3d12: invalid card texture mip dimensions\n");
++                return false;
++            }
++        }
++        entry->output_width[level] = scratch.output_width[level] = output_width;
++        entry->output_height[level] = scratch.output_height[level] = output_height;
++        pixel_count += (uint64_t)output_width * output_height;
+     }
+     if (!pixel_count || pixel_count > UINT32_MAX ||
+         pixel_count > SIZE_MAX / sizeof(uint32_t)) {
+@@ -484,12 +514,15 @@
+         DecodeJob *job = snapshot ? new (std::nothrow) DecodeJob() : nullptr;
+         if (job) {
+             job->snapshot = snapshot;
++            job->card = entry->card;
+             job->pixels = entry->pixels;
+             job->level_count = entry->key.mip_count;
+-            job->scale = s_texture_scale;
++            job->scale = entry->scale;
+             memcpy(job->width, scratch.width, sizeof(job->width));
+             memcpy(job->height, scratch.height, sizeof(job->height));
+             memcpy(job->offset, scratch.offset, sizeof(job->offset));
++            memcpy(job->output_width, scratch.output_width, sizeof(job->output_width));
++            memcpy(job->output_height, scratch.output_height, sizeof(job->output_height));
+             job->pixel_count = (uint32_t)pixel_count;
+             if (s_verify_decode) {
+                 job->verify = static_cast<uint32_t *>(
+@@ -497,7 +530,8 @@
+                 if (!job->verify ||
+                     !decode_levels(
+                         nullptr, job->level_count, job->scale, job->width,
+-                        job->height, job->offset, job->verify)) {
++                        job->height, job->offset, job->output_width,
++                        job->output_height, job->verify, job->card)) {
+                     job_free(job);
+                     return fail();
+                 }
+@@ -512,8 +546,9 @@
+     }
+ 
+     if (!decode_levels(
+-            nullptr, entry->key.mip_count, s_texture_scale,
+-            scratch.width, scratch.height, scratch.offset, entry->pixels)) {
++            nullptr, entry->key.mip_count, entry->scale,
++            scratch.width, scratch.height, scratch.offset, scratch.output_width,
++            scratch.output_height, entry->pixels, entry->card)) {
+         return fail();
+     }
+     entry->pending = true;
+@@ -556,8 +591,8 @@
+     heap.VisibleNodeMask = 1;
+     D3D12_RESOURCE_DESC desc = {};
+     desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+-    desc.Width = entry->key.width[0] * s_texture_scale;
+-    desc.Height = entry->key.height[0] * s_texture_scale;
++    desc.Width = entry->key.width[0] * entry->scale;
++    desc.Height = entry->key.height[0] * entry->scale;
+     desc.DepthOrArraySize = 1;
+     desc.MipLevels = entry->key.mip_count;
+     desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+@@ -577,8 +612,8 @@
+     if (!entry->resource && !create_resource(entry)) return false;
+     ID3D12GraphicsCommandList *command_list = ged3d12_command_list();
+     for (uint32_t level = 0; level < entry->key.mip_count; level++) {
+-        UINT width = entry->key.width[level] * s_texture_scale;
+-        UINT height = entry->key.height[level] * s_texture_scale;
++        UINT width = entry->output_width[level];
++        UINT height = entry->output_height[level];
+         UINT row_pitch = (width * 4u + D3D12_TEXTURE_DATA_PITCH_ALIGNMENT - 1u) &
+                          ~(D3D12_TEXTURE_DATA_PITCH_ALIGNMENT - 1u);
+         UINT64 upload_size = (UINT64)row_pitch * height;
+@@ -788,7 +823,10 @@
+                 GE_D3D12_TEXTURE_FRAMEBUFFER_FORMAT_SHIFT);
+         return true;
+     }
+-    if (s_texture_scale > 1u)
++    const SrMGA2CardMod *card = sr_mga2_card_mod_find(state);
++    uint32_t scale = sr_mga2_card_mod_scale(card);
++    if (scale < s_texture_scale) scale = s_texture_scale;
++    if (scale > 1u)
+         out->flags |= GE_D3D12_TEXTURE_UPSCALED;
+ 
+     GeD3D12TextureKey key = {};
+@@ -810,6 +848,7 @@
+     for (uint32_t i = 0; i < MAX_TEXTURES; i++) {
+         TextureEntry *entry = &s_textures[i];
+         if (!entry->occupied || !entry->valid ||
++            entry->card != card ||
+             entry->key_hash != key_hash ||
+             entry->quick_hash != quick_hash ||
+             memcmp(&entry->key, &key, sizeof(key)) != 0) {
+@@ -838,6 +877,7 @@
+     for (uint32_t i = 0; i < MAX_TEXTURES; i++) {
+         TextureEntry *entry = &s_textures[i];
+         if (!entry->occupied || entry->key_hash != key_hash ||
++            entry->card != card ||
+             entry->content_hash != content_hash ||
+             memcmp(&entry->key, &key, sizeof(key)) != 0) {
+             continue;
+@@ -857,6 +897,8 @@
+     TextureEntry *entry = allocate_entry(&slot);
+     if (!entry) return false;
+     entry->key = key;
++    entry->card = card;
++    entry->scale = scale;
+     entry->key_hash = key_hash;
+     entry->quick_hash = quick_hash;
+     entry->content_hash = content_hash;
+diff --git a/src/rt/gpu_sdl3vk/ge_gpu.c b/src/rt/gpu_sdl3vk/ge_gpu.c
+--- a/src/rt/gpu_sdl3vk/ge_gpu.c
++++ b/src/rt/gpu_sdl3vk/ge_gpu.c
+@@ -37,6 +37,7 @@
+ #include "ge_gpu.h"
+ #include "sdl3vk.h"
+ #include "shader_state.h"
++#include "card_mods.h"
+ #include "../graphics_config.h"
+ #include "../texture_scaler.h"
+ 
+@@ -96,6 +97,7 @@
+ 
+ typedef struct {
+     uint64_t key, hash;                    /* state key + content hash; 0,0 = empty */
++    const SrMGA2CardMod *card;
+     VkImage img; VkDeviceMemory mem; VkImageView view; VkSampler smp;
+     VkDescriptorSet set;
+     int w, h;
+@@ -147,6 +149,7 @@
+ static VkDeviceMemory s_vbuf_m, s_xfer_m;
+ static GpuVert *s_vmap;
+ static void    *s_xfer_map;
++static VkDeviceSize s_xfer_bytes;
+ static VkBuffer s_clut_buffer;
+ static VkDeviceMemory s_clut_memory;
+ static void *s_clut_map;
+@@ -967,6 +970,16 @@
+ 
+ static uint64_t s_texlru = 1;
+ 
++static void tex_destroy(TexEnt *entry) {
++    if (entry->set)
++        vkFreeDescriptorSets(s_dev, s_dpool_tex, 1, &entry->set);
++    if (entry->smp) vkDestroySampler(s_dev, entry->smp, NULL);
++    if (entry->view) vkDestroyImageView(s_dev, entry->view, NULL);
++    if (entry->img) vkDestroyImage(s_dev, entry->img, NULL);
++    if (entry->mem) vkFreeMemory(s_dev, entry->mem, NULL);
++    memset(entry, 0, sizeof(*entry));
++}
++
+ /* Evict the least-recently-used quarter of the cache (the working set survives; the
+  * old full-clear rebuilt EVERY texture every frame once a scene exceeded the cap). */
+ static void tex_evict_lru(void) {
+@@ -977,16 +990,16 @@
+         for (int i = 1; i < s_tex_n; i++)
+             if (s_tex[i].lru < s_tex[v].lru) v = i;
+         TexEnt *e = &s_tex[v];
+-        vkFreeDescriptorSets(s_dev, s_dpool_tex, 1, &e->set);
+-        vkDestroySampler(s_dev, e->smp, NULL);
+-        vkDestroyImageView(s_dev, e->view, NULL);
+-        vkDestroyImage(s_dev, e->img, NULL);
+-        vkFreeMemory(s_dev, e->mem, NULL);
++        tex_destroy(e);
+         *e = s_tex[--s_tex_n];
+     }
+ }
+ 
+ static int tex_upload(VkImage img, const uint32_t *px, int w, int h) {
++    if ((uint64_t)w * (uint64_t)h * 4u > s_xfer_bytes) {
++        fprintf(stderr, "gegpu: texture exceeds transfer buffer capacity\n");
++        return 0;
++    }
+     memcpy(s_xfer_map, px, (size_t)w * (size_t)h * 4);
+     if (!cmd_begin()) return 0;
+     VkImageLayout lay = VK_IMAGE_LAYOUT_UNDEFINED;
+@@ -1000,8 +1013,31 @@
+     return cmd_submit_wait();
+ }
+ 
+-static const uint32_t *tex_decode_scaled(int w, int h) {
++static const uint32_t *tex_decode_scaled(
++    int w, int h, const SrMGA2CardMod *card, uint32_t scale, uint32_t **owned) {
++    *owned = NULL;
+     ge_decode_tex_rgba(s_texscratch);
++    if (card) {
++        uint64_t count = (uint64_t)w * h * scale * scale;
++        if (count > SIZE_MAX / sizeof(uint32_t)) {
++            fprintf(stderr, "gegpu: card texture is too large\n");
++            return NULL;
++        }
++        uint32_t *pixels = (uint32_t *)malloc((size_t)count * sizeof(uint32_t));
++        if (!pixels) {
++            fprintf(stderr, "gegpu: cannot allocate card texture pixels\n");
++            return NULL;
++        }
++        if (!sr_mga2_card_mod_compose(
++                card, s_texscratch, (uint32_t)w, (uint32_t)h,
++                scale, 0, (uint32_t)w * scale, (uint32_t)h * scale, pixels)) {
++            fprintf(stderr, "gegpu: card replacement composition failed\n");
++            free(pixels);
++            return NULL;
++        }
++        *owned = pixels;
++        return pixels;
++    }
+     if (s_texture_scale == 1u) return s_texscratch;
+     if (!s_texscaled || !sr_texture_scale_rgba(
+             s_texscratch, (uint32_t)w, (uint32_t)h,
+@@ -1030,9 +1066,11 @@
+     return 1;
+ }
+ 
+-static VkDescriptorSet tex_get(void) {
++static VkDescriptorSet tex_get(const SrMGA2CardMod *card) {
+     int w = s_ge->tex_w, h = s_ge->tex_h;
+     if (w <= 0 || h <= 0 || w > 512 || h > 512) return s_white_set;
++    uint32_t scale = sr_mga2_card_mod_scale(card);
++    if (scale < s_texture_scale) scale = s_texture_scale;
+     int linear  = (s_ge->tex_filter & 1) || ((s_ge->tex_filter >> 8) & 1);
+     int clamp_u = s_ge->tex_wrap & 1, clamp_v = (s_ge->tex_wrap >> 8) & 1;
+     uint64_t key = (uint64_t)s_ge->tex_addr | ((uint64_t)s_ge->tex_fmt << 32)
+@@ -1045,14 +1083,19 @@
+     uint64_t hash = tex_hash();
+     for (int i = 0; i < s_tex_n; i++) {
+         TexEnt *e = &s_tex[i];
+-        if (e->key != key) continue;
++        if (e->key != key || e->card != card) continue;
+         e->lru = s_texlru++;
+         if (e->hash == hash) { e->pending = 1; return e->set; }
+         /* same texture state, new contents: update in place (cache stays bounded) */
+         if (e->pending) submit_pending();
+-        const uint32_t *pixels = tex_decode_scaled(w, h);
+-        if (!pixels || !tex_upload(e->img, pixels, e->w, e->h))
++        uint32_t *owned;
++        const uint32_t *pixels = tex_decode_scaled(w, h, card, scale, &owned);
++        int uploaded = pixels && tex_upload(e->img, pixels, e->w, e->h);
++        free(owned);
++        if (!uploaded) {
++            s_failed = 1;
+             return s_white_set;
++        }
+         e->hash = hash;
+         e->pending = 1;
+         s_cnt_texup++;
+@@ -1063,18 +1106,32 @@
+         submit_pending();   /* batches reference sets about to be freed */
+         tex_evict_lru();
+     }
+-    const uint32_t *pixels = tex_decode_scaled(w, h);
+-    if (!pixels) return s_white_set;
++    uint32_t *owned;
++    const uint32_t *pixels = tex_decode_scaled(w, h, card, scale, &owned);
++    if (!pixels) { s_failed = 1; return s_white_set; }
+     TexEnt *e = &s_tex[s_tex_n];
+     memset(e, 0, sizeof(*e));
+-    int scaled_w = w * (int)s_texture_scale;
+-    int scaled_h = h * (int)s_texture_scale;
+-    if (!tex_make(pixels, scaled_w, scaled_h, linear, clamp_u, clamp_v,
+-                  &e->img, &e->mem, &e->view, &e->smp))
++    int scaled_w = w * (int)scale;
++    int scaled_h = h * (int)scale;
++    int made = tex_make(pixels, scaled_w, scaled_h, linear, clamp_u, clamp_v,
++                        &e->img, &e->mem, &e->view, &e->smp);
++    free(owned);
++    if (!made) {
++        vkDeviceWaitIdle(s_dev);
++        tex_destroy(e);
++        s_failed = 1;
+         return s_white_set;
++    }
+     e->set = make_descriptor(e->view, e->smp, s_dpool_tex);
+-    if (!e->set) return s_white_set;
++    if (!e->set) {
++        fprintf(stderr, "gegpu: cannot create texture descriptor\n");
++        vkDeviceWaitIdle(s_dev);
++        tex_destroy(e);
++        s_failed = 1;
++        return s_white_set;
++    }
+     e->key = key; e->hash = hash;
++    e->card = card;
+     e->w = scaled_w; e->h = scaled_h;
+     e->pending = 1;
+     e->lru = s_texlru++;
+@@ -1148,7 +1205,8 @@
+         ? zmap[state->ztest & 7] : VK_COMPARE_OP_ALWAYS;
+ }
+ 
+-static void build_state(int persp, int sprite, Batch *b) {
++static void build_state(
++    int persp, int sprite, const SrMGA2CardMod *card, Batch *b) {
+     GeState *g = s_ge;
+     PipeKey *k = &b->key;
+     uint32_t flags;
+@@ -1213,7 +1271,7 @@
+     if (textured) {
+         {
+             const char *setting = getenv("SR_GPU_PSP_SAMPLER");
+-            if (s_texture_scale == 1u &&
++            if (s_texture_scale == 1u && sr_mga2_card_mod_scale(card) == 1u &&
+                 (!setting || !setting[0] || strcmp(setting, "0") != 0)) {
+                 flags |= GE_VK_SHADER_PSP_SAMPLER;
+             }
+@@ -1340,12 +1398,13 @@
+             } else {
+                 /* incompatible stride/format reinterpretation: VRAM + decoder (rare) */
+                 target_readback(src);
+-                b->dset = tex_get();
++                b->dset = tex_get(card);
+             }
+         } else {
+-            b->dset = tex_get();
+-        }
+-    }
++            b->dset = tex_get(card);
++        }
++    }
++    if (s_failed) { b->sw = 0; return; }
+     b->pc.config[0] =
+         (int32_t)((g->tex_func & 7u) | (flags << 8));
+ }
+@@ -1353,6 +1412,7 @@
+ /* ---- built-state template (state rebuilt per CHANGE, not per primitive) ------------------ */
+ 
+ typedef struct {
++    const SrMGA2CardMod *card;
+     uint32_t clear, clear_mode;
+     uint32_t fbfmt;
+     int blend_enable; uint32_t blend_mode, fixa, fixb;
+@@ -1379,6 +1439,7 @@
+ static void snap_fill(StateSnap *o, int persp, int sprite) {
+     GeState *g = s_ge;
+     memset(o, 0, sizeof(*o));
++    o->card = sr_mga2_card_mod_find(g);
+     o->clear = (uint32_t)g->clear; o->clear_mode = g->clear_mode;
+     o->fbfmt = g->fbfmt;
+     o->blend_enable = g->blend_enable; o->blend_mode = g->blend_mode;
+@@ -1415,7 +1476,7 @@
+     StateSnap sn; snap_fill(&sn, persp, sprite);
+     if (s_tmpl_ok && !memcmp(&sn, &s_snapst, sizeof(sn))) { *out = s_tmpl; return; }
+     begin_target();                       /* build_state may bind sibling targets */
+-    build_state(persp, sprite, &s_tmpl);
++    build_state(persp, sprite, sn.card, &s_tmpl);
+     snap_fill(&s_snapst, persp, sprite);  /* re-fill: build_state may have submitted */
+     s_tmpl_ok = 1;
+     *out = s_tmpl;
+@@ -1880,10 +1941,15 @@
+         pixels =
+             (uint64_t)512u * 512u *
+             transfer_scale * transfer_scale;
++        {
++            uint64_t card_pixels = sr_mga2_card_mod_max_pixels(s_texture_scale);
++            if (card_pixels > pixels) pixels = card_pixels;
++        }
+         if (pixels > SIZE_MAX / sizeof(uint32_t)) {
+             fprintf(stderr, "gegpu: transfer allocation is too large\n");
+             return 0;
+         }
++        s_xfer_bytes = (VkDeviceSize)pixels * sizeof(uint32_t);
+     }
+ 
+     VkCommandPoolCreateInfo cpi = { VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO };
+@@ -1928,14 +1994,10 @@
+             &s_clut_buffer, &s_clut_memory, &s_clut_map)) return 0;
+     s_clut_valid = 0;
+     {
+-        uint32_t transfer_scale =
+-            s_render_scale > s_texture_scale
+-                ? s_render_scale : s_texture_scale;
+         if (!make_buffer(
+-            (VkDeviceSize)512u * 512u * 4u *
+-                transfer_scale * transfer_scale,
+-            VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+-            &s_xfer, &s_xfer_m, &s_xfer_map)) return 0;
++                s_xfer_bytes,
++                VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
++                &s_xfer, &s_xfer_m, &s_xfer_map)) return 0;
+     }
+ 
+     VkDescriptorSetLayoutBinding db = {0};
+@@ -2218,6 +2280,7 @@
+     s_vbuf_m = s_xfer_m = s_clut_memory = VK_NULL_HANDLE;
+     s_vmap = NULL;
+     s_xfer_map = NULL;
++    s_xfer_bytes = 0;
+     s_clut_map = NULL;
+     s_clut_valid = 0;
+     s_dlayout = s_dst_dlayout = s_clut_dlayout = VK_NULL_HANDLE;

@@ -837,3 +837,73 @@ tutorial and Arena captures do not establish coverage of every scene or
 effect. The opt-in tests in `tools/mga2/tests/test_outline_rendering.py`
 exercise recorded scenes when an isolated Arena save is supplied, and
 `test_outline_ui.py` can check the launcher on an interactive Windows desktop.
+
+## MGA2-F-021 - Card-illustration replacement feasibility
+
+**Status:** Implemented and validated in selected Arena card draws
+
+The supported USA disc stores card illustrations in the compressed
+`stage/init/_zar` resource, inside `resident.qar`. The following texture
+packs contain 344 entries in total:
+
+| Pack | Entries |
+|---|---:|
+| `cd_illustac.txp` | 27 |
+| `cd_illustch.txp` | 122 |
+| `cd_illustit.txp` | 44 |
+| `cd_illustsp.txp` | 74 |
+| `cd_illustwp.txp` | 77 |
+
+These are not PNG files. The sampled packs contain compressed, swizzled,
+paletted images; most illustration entries are 112x72 pixels. The count also
+includes masks and other entries, so it is not a card count. Decoding the
+entries produced 325 distinct RGBA images: 16 groups contain duplicate
+images. Some entries have identical indexed pixels and palettes despite
+distinct resource metadata, so a replacement keyed only by texture contents
+cannot distinguish every resource.
+
+In an isolated software-renderer Arena replay using
+`tools\mga2\arena_runtime.pad`, a temporary texture diagnostic captured the
+Survival Kit illustration. Its 112x72 RGB pixels matched entry 24 of
+`cd_illustit.txp` byte-for-byte; the entry's texture metadata identifier is
+`0x00692a43`. The live draw used a 128x128 logical texture with a 112-pixel
+buffer width, swizzled 8-bit indices, and a palette. The presentation-38000
+frame matched the uninstrumented replay byte-for-byte, with SHA-256
+`8a43f66be7f0896b27114ba9545d10b000aa1c63cfdce490cf668e7e2a230b85`.
+The live palette pointer led back to the relocated TXP and its metadata. The
+loader uses that identity together with the original indexed pixels, palette,
+and texture geometry, allowing differently identified duplicate images to be
+replaced independently.
+
+The exporter now verifies the user's ISO and creates a catalog and PNG
+templates under `mods\cards`. A PNG copied from `templates` into that folder
+replaces the corresponding illustration after a restart. Integer scales from
+1x to 8x are accepted. Software uses a native-resolution downsample; D3D12
+and Vulkan upload the higher-resolution artwork while retaining the PSP
+logical dimensions, UVs, and original texture padding. See the
+[card mod instructions](../README.md#card-illustration-mods).
+
+An unmodded software replay using the new driver reproduced the
+presentation-38000 SHA-256 above. With a synthetic 4x Survival Kit replacement,
+9,751 pixels changed, all within the original large 112x72 and small 56x36
+artwork regions. In a separate accelerated Arena replay, a synthetic 4x
+Bandage replacement (`cd_illustit.txp` entry 11, ID `0x00922a43`) was applied
+on both D3D12 and Vulkan. At 4x internal resolution, the changed pixels were
+confined to the corresponding 448x288 and 224x144 artwork regions; each
+renderer retained alternating two-pixel stripes, demonstrating detail finer
+than a four-pixel PSP texel. The D3D12 run enabled background-decode
+verification, and Vulkan validation reported no errors or warnings.
+
+Focused exporter and native-loader tests cover malformed input, resource
+identity, 4-bit and 8-bit textures, transparency, scaling, and non-square
+mips. The opt-in recorded regression in
+[`test_card_rendering.py`](../tools/mga2/tests/test_card_rendering.py)
+compares unmodded and modded hardware captures when
+`MGA2_CARD_RENDER_MEMSTICK` points to an Arena save; optional executable, ISO,
+renderer, and Vulkan-validation overrides are defined in the test.
+
+These observations do not establish coverage of every card, scene, or
+resource-loading path. The exported entries include masks and other
+non-illustration resources, and filenames are resource identifiers rather
+than friendly card names. Portraits, other UI artwork, and vector replacements
+remain separate follow-up work. No ISO-derived artwork is distributed.

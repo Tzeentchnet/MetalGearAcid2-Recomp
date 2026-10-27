@@ -141,10 +141,12 @@ set(MGA2_RUNTIME_PREPARE
     --toolkit "${PSP_RECOMP_DIR}"
     --overlay "${MGA2_RUNTIME_OVERLAY}"
     --patch "${MGA2_RUNTIME_INPUTS}/outline.patch"
+    --patch "${MGA2_RUNTIME_INPUTS}/cards.patch"
     --shaders "${MGA2_RUNTIME_INPUTS}")
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
   "${CMAKE_SOURCE_DIR}/tools/mga2/prepare_runtime.py"
   "${MGA2_RUNTIME_INPUTS}/outline.patch"
+  "${MGA2_RUNTIME_INPUTS}/cards.patch"
   "${MGA2_RUNTIME_INPUTS}/psp_ps.inc"
   "${MGA2_RUNTIME_INPUTS}/psp_ps_direct.inc"
   "${MGA2_RUNTIME_INPUTS}/psp_frag.inc")
@@ -280,6 +282,7 @@ add_executable(mga2_driver
   ${RT}/driver.c
   tools/mga2/module_policy.c
   tools/mga2/outline_policy.c
+  tools/mga2/card_mods.cpp
   ${MGA2_RUNTIME_SRCS})
 add_dependencies(mga2_driver mga2_verify_toolkit)
 target_include_directories(mga2_driver PRIVATE
@@ -323,7 +326,7 @@ if(CMAKE_C_SIMULATE_ID STREQUAL "MSVC")
 endif()
 target_link_libraries(mga2_driver PRIVATE
   mga2_game mga2_at3 mga2_savedata_crypto
-  mfplat mfuuid gdi32 user32 dinput8 dxguid ole32 winmm xaudio2 bcrypt)
+  mfplat mfuuid gdi32 user32 dinput8 dxguid ole32 windowscodecs winmm xaudio2 bcrypt)
 if(MGA2_ENABLE_D3D12)
   target_compile_definitions(mga2_driver PRIVATE SR_D3D12)
   target_link_libraries(mga2_driver PRIVATE SDL3::SDL3 d3d12 dxgi)
@@ -352,6 +355,22 @@ add_custom_command(TARGET mga2_driver POST_BUILD
 
 include(CTest)
 if(BUILD_TESTING)
+  add_executable(mga2_card_mods_tests EXCLUDE_FROM_ALL
+    tools/mga2/tests/card_mods_test.cpp
+    tools/mga2/card_mods.cpp
+    ${RT}/settings_path.c)
+  add_dependencies(mga2_card_mods_tests mga2_verify_toolkit)
+  target_include_directories(mga2_card_mods_tests PRIVATE
+    "${RT}" "${CMAKE_SOURCE_DIR}/tools/mga2")
+  target_compile_definitions(mga2_card_mods_tests PRIVATE _CRT_SECURE_NO_WARNINGS)
+  target_compile_features(mga2_card_mods_tests PRIVATE cxx_std_17)
+  target_link_libraries(mga2_card_mods_tests PRIVATE ole32 windowscodecs)
+  add_test(NAME mga2_card_mods
+    COMMAND "${CMAKE_COMMAND}" -E env
+      "MGA2_CARD_TEST_EXE=$<TARGET_FILE:mga2_card_mods_tests>"
+      "${Python3_EXECUTABLE}" -m unittest tools.mga2.tests.test_card_mods_native)
+  set_tests_properties(mga2_card_mods PROPERTIES WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+
   add_executable(mga2_display_state_tests EXCLUDE_FROM_ALL
     ${MGA2_RUNTIME_TESTS}/display_state_test.c
     ${RT}/display_state.c)

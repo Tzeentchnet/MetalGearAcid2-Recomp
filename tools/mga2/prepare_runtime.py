@@ -76,20 +76,23 @@ def tree_hash(root: Path) -> str:
     return digest.hexdigest()
 
 
-def expected_inputs(patch: Path, shaders: Path) -> dict[str, object]:
+def expected_inputs(patches: list[Path], shaders: Path) -> dict[str, object]:
     return {
-        "schema": 1,
-        "patch_sha256": file_hash(patch),
+        "schema": 2,
+        "patches": [
+            {"name": patch.name, "sha256": file_hash(patch)}
+            for patch in patches
+        ],
         "shaders": {name: file_hash(shaders / name) for name in SHADERS},
     }
 
 
-def verify(overlay: Path, patch: Path, shaders: Path) -> None:
+def verify(overlay: Path, patches: list[Path], shaders: Path) -> None:
     if is_link_or_reparse_point(overlay):
         raise ValueError(f"runtime overlay cannot be a link: {overlay}")
     with (overlay / MARKER).open("r", encoding="utf-8") as stream:
         recorded = json.load(stream)
-    expected = expected_inputs(patch, shaders)
+    expected = expected_inputs(patches, shaders)
     expected["tree_sha256"] = tree_hash(overlay)
     if recorded != expected:
         raise ValueError(
@@ -98,7 +101,7 @@ def verify(overlay: Path, patch: Path, shaders: Path) -> None:
         )
 
 
-def prepare(toolkit: Path, overlay: Path, patch: Path, shaders: Path) -> None:
+def prepare(toolkit: Path, overlay: Path, patches: list[Path], shaders: Path) -> None:
     toolkit = toolkit.resolve(strict=True)
     overlay = overlay.absolute()
     if overlay.name != "mga2-runtime-overlay":
@@ -129,25 +132,26 @@ def prepare(toolkit: Path, overlay: Path, patch: Path, shaders: Path) -> None:
 
         environment = os.environ.copy()
         environment["GIT_CEILING_DIRECTORIES"] = str(stage.parent)
-        command = [
-            "git", "-c", "core.autocrlf=false", "apply",
-            "--ignore-space-change", "--whitespace=nowarn",
-            str(patch.resolve()),
-        ]
-        for arguments in (command[:4] + ["--check"] + command[4:], command):
-            result = subprocess.run(
-                arguments, cwd=stage, env=environment,
-                capture_output=True, text=True, encoding="utf-8",
-                errors="replace", check=False,
-            )
-            if result.returncode:
-                raise ValueError(
-                    "cannot apply pinned runtime patch: "
-                    + (result.stderr or result.stdout).strip()
+        for patch in patches:
+            command = [
+                "git", "-c", "core.autocrlf=false", "apply",
+                "--ignore-space-change", "--whitespace=nowarn",
+                str(patch.resolve()),
+            ]
+            for arguments in (command[:4] + ["--check"] + command[4:], command):
+                result = subprocess.run(
+                    arguments, cwd=stage, env=environment,
+                    capture_output=True, text=True, encoding="utf-8",
+                    errors="replace", check=False,
                 )
+                if result.returncode:
+                    raise ValueError(
+                        f"cannot apply pinned runtime patch {patch.name}: "
+                        + (result.stderr or result.stdout).strip()
+                    )
         for name, relative in SHADERS.items():
             shutil.copyfile(shaders / name, stage / relative)
-        manifest = expected_inputs(patch, shaders)
+        manifest = expected_inputs(patches, shaders)
         manifest["tree_sha256"] = tree_hash(stage)
         (stage / MARKER).write_text(
             json.dumps(manifest, indent=2, sort_keys=True) + "\n",
@@ -162,7 +166,7 @@ def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--toolkit", type=Path, required=True)
     parser.add_argument("--overlay", type=Path, required=True)
-    parser.add_argument("--patch", type=Path, required=True)
+    parser.add_argument("--patch", type=Path, action="append", required=True)
     parser.add_argument("--shaders", type=Path, required=True)
     parser.add_argument("--verify", action="store_true")
     args = parser.parse_args(argv)

@@ -94,6 +94,39 @@ scene is detected. They have been tested in selected tutorial and Arena
 scenes; see the
 [outline investigation](docs/FINDINGS.md#mga2-f-020---character-outline-pixelation).
 
+## Card illustration mods
+
+You can replace card illustrations with PNG files without modifying the ISO.
+Generate templates from your own supported USA disc, specifying a **new**
+`mods\cards` directory beside the installed `mga2.exe`:
+
+```powershell
+python tools\mga2\export_cards.py "C:\Games\Metal Gear Acid 2 (USA).iso" --out "C:\Games\MGA2\mods\cards"
+```
+
+The exporter verifies the ISO and creates `catalog.txt` and a `templates`
+folder. It refuses to overwrite an existing card folder. To replace an
+illustration:
+
+1. Browse the PNGs in `mods\cards\templates` to find the image.
+2. Copy it into `mods\cards`, keeping its filename, and edit that copy.
+3. Restart the game. Remove the copy to restore the original illustration.
+
+The PNG must have the template's dimensions or the same whole-number
+multiple on both axes, up to 8x. For example, a 112x72 template accepts a
+448x288 replacement. Transparent PNGs are supported, subject to the game's
+normal transparency and color effects. The game keeps the original card
+geometry and on-screen size. D3D12 and Vulkan retain the additional image
+detail; use a higher internal resolution to see it. The software renderer
+uses a native-resolution version. Decoded replacements are limited to
+512 MiB in total; images that exceed the limit are reported and not loaded.
+
+The exported entries include masks and other resources, not just unique
+cards. Filenames identify resource entries rather than friendly card names.
+This first version is limited to the card-illustration packs and tested scenes;
+other UI artwork, portraits, and vector images are not replaced. Invalid PNGs,
+unexpected filenames, and catalog errors are reported in the launch console.
+
 ## Startup shortcut
 
 Enable **Skip startup sequence (go directly to main menu)** in the launcher
