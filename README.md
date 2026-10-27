@@ -93,13 +93,15 @@ keys are `renderer`, `internal_resolution`, `texture_scale`, and
 
 - Windows 10/11 x64
 - Python 3.11 or newer
+- Git, to verify the toolkit checkout and its working-tree state
 - CMake 3.25 or newer and Ninja
 - Visual Studio 2022 Build Tools with clang-cl and a Windows SDK
 - Vulkan SDK when building the default Vulkan backend. A standard
   `C:\VulkanSDK\<version>` install is detected automatically.
 - `psp-recomp` commit
   `b56ff30ef5997b9f168209df8c33156e82402e7b`, pinned in
-  [`config/mga2.toml`](config/mga2.toml). A sibling checkout at
+  [`config/mga2.toml`](config/mga2.toml), with no tracked changes or
+  non-ignored untracked files. A sibling checkout at
   `..\psp-recomp` is used by default; `PSP_RECOMP_DIR`, CMake's
   `PSP_RECOMP_DIR`, and generator/installer `--toolkit` options can override
   it.
@@ -169,6 +171,21 @@ Vulkan SDK. Existing `PSP_RECOMP_DIR`, `PSP_RECOMP_CODEGEN_CACHE`, and
 and function catalog are optional. Run `install.bat --help` for the complete
 option summary.
 
+> [!IMPORTANT]
+> The installer currently requires an **ASCII-only absolute ISO path**.
+> Non-ASCII paths cannot be handled reliably by the Windows launcher and the
+> runtime's narrow-character file APIs; the installer rejects them before
+> extraction. Move the ISO to a path such as `C:\Games\MGA2.iso`. Full Unicode
+> support for project, toolkit, installation, and memory-stick paths has not
+> been validated either.
+
+The toolkit revision and clean working tree are checked before generation and
+again when configuring and building. For deliberate development with a
+modified, unpinned, or non-Git toolkit, pass `--allow-unsupported-toolkit` to
+`install.bat` to enable an explicitly unsupported build. Its toolkit source
+identity is recorded, and changing its source, tool, or asset trees requires
+regeneration. This override is not a validated release configuration.
+
 ## Extract and generate
 
 ```powershell
@@ -184,6 +201,16 @@ unchanged reruns. The main module is written beneath
 `build\mga2\gen\modules`. Dynamic tables use runtime JAL resolution and verify
 guest function bytes before native dispatch. Normalized catalog matches do not
 authorize code reuse.
+
+Extraction checks all configured file hashes before publishing outputs, and
+generation rechecks every main and native-module input. Generation stages a
+complete split-source tree and publishes a source manifest only on success;
+allow enough disk space for a second generated tree during regeneration.
+Single-file generation is not supported by this project's CMake build.
+
+For manual development against an unsupported toolkit, pass
+`--allow-unsupported-toolkit` to `gen.py` and configure CMake with
+`-DMGA2_ALLOW_UNSUPPORTED_TOOLKIT=ON`. Use the same toolkit at both stages.
 
 ## Build
 
@@ -207,6 +234,33 @@ same targeted `cmake --build` command; do not regenerate game code or delete the
 build tree. Changes to generated-code compiler options necessarily rebuild all
 361 generated translation units, so batch those changes and measure the
 resulting executable before changing the build profile again.
+
+## Tests
+
+Source-only checks require neither an ISO nor the toolkit:
+
+```powershell
+python -m unittest discover -s tools\mga2\tests -p "test_*.py"
+python -m compileall -q tools\mga2
+python tools\mga2\check_release_contents.py
+```
+
+The content check examines known protected paths in tracked files and reachable
+Git history; it is not a substitute for reviewing the release and its history.
+CI runs these checks on Linux and Windows with Python 3.11 and 3.12.
+
+The native test executables are excluded from the default build. After
+generating inputs and configuring the combined preset, build them explicitly
+in the same developer shell before running CTest:
+
+```powershell
+cmake --build --preset clang-cl --target mga2_display_state_tests mga2_perf_stats_tests mga2_ge_patch_math_tests mga2_graphics_config_tests mga2_texture_scaler_tests mga2_d3d12_vertex_tests mga2_vulkan_shader_state_tests
+ctest --test-dir out\build\clang-cl --output-on-failure -R "^mga2_"
+```
+
+The software-only preset omits the texture-scaler, D3D12, and Vulkan targets.
+Neither source-only tests nor these native unit tests establish gameplay or
+renderer compatibility.
 
 ## Run
 

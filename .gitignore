@@ -1,12 +1,25 @@
 # User-supplied game media and extracted game code.
-*.iso
-*.ISO
-*.cso
-*.CSO
-*.pbp
-*.PBP
-*.prx
-*.PRX
+*.[iI][sS][oO]
+*.[cC][sS][oO]
+*.[cC][hH][dD]
+*.[iI][mM][gG]
+*.[cC][uU][eE]
+*.[pP][bB][pP]
+*.[pP][rR][xX]
+*.[eE][lL][fF]
+*.[bB][iI][nN]
+*.[sS][fF][oO]
+*.[sS][aA][vV]
+*.[eE][xX][eE]
+*.[dD][lL][lL]
+*.[zZ][iI][pP]
+*.[7][zZ]
+*.[rR][aA][rR]
+**/PSP/SAVEDATA/
+*_recomp.c
+*_recomp_[0-9][0-9][0-9].c
+*_recomp_register.c
+*_recomp.h
 /Vimm's Lair.txt
 
 # Generated recompilation, native build output, and protected evidence.
@@ -19,10 +32,10 @@
 /edram.bin
 /nidseq_mine.txt
 /interp_fallback_test.misses
-/fb_*.ppm
-/capture_present_*.ppm
-/snap_*.ppm
-/snap_present_*.ppm
+fb_*
+capture_present_*
+snap_*
+snap_present_*
 
 # Local reverse-engineering and editor state.
 *.gpr

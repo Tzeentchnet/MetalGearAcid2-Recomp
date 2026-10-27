@@ -11,6 +11,8 @@ option(MGA2_FETCH_SDL3
        "Download the pinned SDL3 development package when it is not installed"
        ON)
 option(MGA2_ENABLE_INSTRUCTION_TRACE "Keep instruction trace hooks" OFF)
+option(MGA2_ALLOW_UNSUPPORTED_TOOLKIT
+       "Allow a modified or unpinned psp-recomp toolkit for development" OFF)
 
 if(NOT EXISTS "${PSP_RECOMP_DIR}/src/rt/recomp.h")
   message(FATAL_ERROR "PSP_RECOMP_DIR is not a psp-recomp checkout")
@@ -111,28 +113,33 @@ else()
   set(MGA2_FP_FLAGS -ffp-contract=off -fno-strict-aliasing)
 endif()
 
-file(GLOB MGA2_GEN_SRCS CONFIGURE_DEPENDS
-     "${MGA2_GEN_DIR}/mga2_recomp_[0-9][0-9][0-9].c")
-set(MGA2_REGISTER_SRC "${MGA2_GEN_DIR}/mga2_recomp_register.c")
-if(NOT EXISTS "${MGA2_REGISTER_SRC}" OR NOT MGA2_GEN_SRCS)
-  message(FATAL_ERROR
-    "No generated code in ${MGA2_GEN_DIR}. Run tools/mga2/gen.py first.")
+set(MGA2_GEN_MANIFEST "${MGA2_GEN_DIR}/mga2_generated_sources.txt")
+include("${CMAKE_SOURCE_DIR}/cmake/GeneratedSources.cmake")
+mga2_read_generated_sources("${MGA2_GEN_DIR}" MGA2_GEN_SRCS)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+             "${MGA2_GEN_MANIFEST}")
+find_package(Python3 3.11 REQUIRED COMPONENTS Interpreter)
+set(MGA2_TOOLKIT_CHECK
+    "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tools/mga2/toolkit_identity.py"
+    --toolkit "${PSP_RECOMP_DIR}"
+    --config "${CMAKE_SOURCE_DIR}/config/mga2.toml"
+    --manifest "${MGA2_GEN_DIR}/mga2_toolkit_identity.json")
+if(MGA2_ALLOW_UNSUPPORTED_TOOLKIT)
+  list(APPEND MGA2_TOOLKIT_CHECK --allow-unsupported-toolkit)
 endif()
-list(APPEND MGA2_GEN_SRCS "${MGA2_REGISTER_SRC}")
-file(GLOB_RECURSE MGA2_NATIVE_GEN_SRCS CONFIGURE_DEPENDS
-     "${MGA2_GEN_DIR}/modules/*/*_recomp.c"
-     "${MGA2_GEN_DIR}/modules/*/*_recomp_[0-9][0-9][0-9].c"
-     "${MGA2_GEN_DIR}/modules/*/*_recomp_register.c")
-if(NOT MGA2_NATIVE_GEN_SRCS)
-  message(FATAL_ERROR
-    "No generated native modules in ${MGA2_GEN_DIR}/modules. "
-    "Run tools/mga2/gen.py first.")
+execute_process(COMMAND ${MGA2_TOOLKIT_CHECK} RESULT_VARIABLE MGA2_TOOLKIT_RESULT)
+if(NOT MGA2_TOOLKIT_RESULT STREQUAL "0")
+  message(FATAL_ERROR "psp-recomp identity verification failed.")
 endif()
-list(APPEND MGA2_GEN_SRCS ${MGA2_NATIVE_GEN_SRCS})
 list(LENGTH MGA2_GEN_SRCS MGA2_GEN_COUNT)
 message(STATUS "MGA2 generated translation units: ${MGA2_GEN_COUNT}")
 
+add_custom_target(mga2_verify_toolkit
+  COMMAND ${MGA2_TOOLKIT_CHECK}
+  COMMENT "Verifying psp-recomp toolkit identity"
+  VERBATIM)
 add_library(mga2_game STATIC ${MGA2_GEN_SRCS})
+add_dependencies(mga2_game mga2_verify_toolkit)
 target_include_directories(mga2_game PRIVATE
   "${PSP_RECOMP_DIR}/src/rt" "${MGA2_GEN_DIR}")
 target_compile_definitions(mga2_game PRIVATE

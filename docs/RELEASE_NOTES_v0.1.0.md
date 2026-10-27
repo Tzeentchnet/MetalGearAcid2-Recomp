@@ -35,7 +35,8 @@ the exact supported ISO before extracting or generating anything locally.
 - Software renderer as the pixel-reference baseline.
 
 Detailed evidence is in [STATUS.md](STATUS.md) and
-[BENCHMARKS.md](BENCHMARKS.md).
+[BENCHMARKS.md](BENCHMARKS.md). Historical benchmark and visual results have
+not yet been rerun with the stricter release-preparation checks.
 
 ## Known limitations
 
@@ -43,8 +44,10 @@ Detailed evidence is in [STATUS.md](STATUS.md) and
 - Full gameplay, all media paths, and long soak runs have not been completed.
 - Arena and some later scenes remain below the fixed-quality 60 FPS target.
 - Only the USA v1.00 ISO with the documented SHA-1 is supported.
-- Windows 10/11 x64 and the exact runtime revision in
-  [`config/mga2.toml`](../config/mga2.toml) are required.
+- The installer requires an ASCII-only absolute ISO path; full Unicode path
+  handling remains unvalidated.
+- Windows 10/11 x64 and a clean checkout of the exact runtime revision in
+  [`config/mga2.toml`](../config/mga2.toml) are required for supported builds.
 
 ## Building
 

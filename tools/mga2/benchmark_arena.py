@@ -12,20 +12,26 @@ import sys
 from time import strftime
 
 from benchmark_common import (
+    ARENA_REPLAY_SHA256,
     BenchmarkCase,
     DEFAULT_BUILD,
+    FIXED_GRAPHICS_PROFILE,
     PerformanceThresholds,
     ROOT,
+    ensure_output_outside_fixture,
     read_graphics_profile,
+    replay_sha256,
+    require_arena_save,
     require_file,
     run_benchmark_case,
+    validate_run_options,
 )
 
 
 ARENA_CASES = (
-    BenchmarkCase("dead-cell", 27_900, 28_000, 28_800, 120),
-    BenchmarkCase("fortune", 29_280, 29_307, 30_000, 480),
-    BenchmarkCase("gameplay", 37_900, 38_000, 38_800, 120),
+    BenchmarkCase("dead-cell", 27_900, 28_000, 28_800, 120, 26_000),
+    BenchmarkCase("fortune", 29_280, 29_307, 30_000, 480, 26_000),
+    BenchmarkCase("gameplay", 37_900, 38_000, 38_800, 120, 26_000),
 )
 DEFAULT_WINDOW = 120
 CASE_CHOICES = ("all", "both", *(case.name for case in ARENA_CASES))
@@ -70,8 +76,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         type=Path,
         required=True,
         help=(
-            "isolated memory-stick root containing the completed Acid 2 "
-            "ULUS10077003 save"
+            "memory-stick root containing the completed Acid 2 "
+            "ULUS10077003 save; each case uses an isolated copy"
         ),
     )
     parser.add_argument(
@@ -208,25 +214,6 @@ def build_extra_environment(args: argparse.Namespace) -> dict[str, str]:
     return environment
 
 
-def require_arena_save(memstick: Path) -> Path:
-    root = memstick.resolve()
-    save = root / "PSP" / "SAVEDATA" / "ULUS10077003"
-    required = {
-        "PARAM.SFO": None,
-        "00000000.000": 48_800,
-    }
-    for name, expected_size in required.items():
-        path = save / name
-        if not path.is_file():
-            raise ValueError(f"Arena save file does not exist: {path}")
-        if expected_size is not None and path.stat().st_size != expected_size:
-            raise ValueError(
-                f"Arena save file has size {path.stat().st_size}, "
-                f"expected {expected_size}: {path}"
-            )
-    return root
-
-
 def combine_results(
     results: list[dict[str, object]],
     fixed_profile: bool,
@@ -255,31 +242,42 @@ def combine_results(
 def main(argv: list[str]) -> int:
     args = parse_args(argv)
     try:
+        validate_run_options(args.window, args.timeout)
+        if args.fortune_window is not None:
+            validate_run_options(args.fortune_window, args.timeout)
+        if args.tail_presents < 0:
+            raise ValueError("--tail-presents cannot be negative")
+        if args.fortune_extra_presents < 0:
+            raise ValueError("--fortune-extra-presents cannot be negative")
+        thresholds = PerformanceThresholds(
+            minimum_fps=args.minimum_fps,
+            minimum_delivered_fps=args.minimum_delivered_fps,
+            maximum_p95_ms=args.maximum_p95_ms,
+            maximum_frame_ms=args.maximum_frame_ms,
+            maximum_delivered_p95_ms=args.maximum_delivered_p95_ms,
+            maximum_delivered_frame_ms=args.maximum_delivered_frame_ms,
+            maximum_gpu_ms=args.maximum_gpu_ms,
+            maximum_readbacks=args.maximum_readbacks,
+        )
         executable = require_file(args.executable, "executable")
         image = require_file(args.image, "generated image")
         iso = require_file(args.iso, "game ISO")
         pad_script = require_file(args.pad_script, "pad script")
         memstick = require_arena_save(args.memstick)
-        if args.window <= 0 or args.tail_presents < 0:
-            raise ValueError("--window must be positive")
-        if args.fortune_window is not None and args.fortune_window <= 0:
-            raise ValueError("--fortune-window must be positive")
-        if args.fortune_extra_presents < 0:
-            raise ValueError("--fortune-extra-presents cannot be negative")
         extra_environment = build_extra_environment(args)
-        # An alternating run is a paired diagnostic, not an acceptance run.
         fixed_profile = (
             not args.allow_nonstandard_profile
-            and not args.alternate
             and not args.fast_forward
+            and not extra_environment
+            and thresholds == PerformanceThresholds()
+            and args.window == DEFAULT_WINDOW
+            and args.fortune_window in (None, DEFAULT_WINDOW)
+            and args.tail_presents == 0
+            and args.fortune_extra_presents == 0
+            and replay_sha256(pad_script) == ARENA_REPLAY_SHA256
         )
         profile = read_graphics_profile(executable, required=None)
-        expected = {
-            "renderer": args.renderer,
-            "internal_resolution": "4",
-            "texture_scale": "2",
-            "d3d12_full_rate": "1",
-        }
+        expected = {**FIXED_GRAPHICS_PROFILE, "renderer": args.renderer}
         profile_matches = all(
             profile.get(name) == value for name, value in expected.items()
         )
@@ -294,17 +292,8 @@ def main(argv: list[str]) -> int:
             / "benchmarks"
             / f"arena-{strftime('%Y%m%d-%H%M%S')}"
         )
+        ensure_output_outside_fixture(output, memstick)
         output.mkdir(parents=True, exist_ok=False)
-        thresholds = PerformanceThresholds(
-            minimum_fps=args.minimum_fps,
-            minimum_delivered_fps=args.minimum_delivered_fps,
-            maximum_p95_ms=args.maximum_p95_ms,
-            maximum_frame_ms=args.maximum_frame_ms,
-            maximum_delivered_p95_ms=args.maximum_delivered_p95_ms,
-            maximum_delivered_frame_ms=args.maximum_delivered_frame_ms,
-            maximum_gpu_ms=args.maximum_gpu_ms,
-            maximum_readbacks=args.maximum_readbacks,
-        )
         selected = select_cases(args.case)
         results: list[dict[str, object]] = []
         for case in selected:
@@ -366,6 +355,8 @@ def main(argv: list[str]) -> int:
         )
         print(json.dumps(combined, indent=2))
         print(f"artifacts: {output}")
+        if not fixed_profile:
+            print("Diagnostic run only; no fixed-profile acceptance result.")
         for failure in combined["failures"]:
             print(f"FAIL: {failure}", file=sys.stderr)
         return 1 if combined["passed"] is False else 0

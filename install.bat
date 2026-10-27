@@ -7,6 +7,8 @@ set "TOOLKIT_PATH="
 set "INSTALL_DIR="
 set "PRESET=clang-cl"
 set "SOFTWARE_ONLY=0"
+set "ALLOW_UNSUPPORTED=OFF"
+set "TOOLKIT_OVERRIDE="
 set "PUSHED=0"
 set "RESULT=1"
 
@@ -15,6 +17,7 @@ if "%~1"=="" goto :arguments_ready
 if /I "%~1"=="--help" goto :show_help
 if /I "%~1"=="-h" goto :show_help
 if /I "%~1"=="--software-only" goto :use_software
+if /I "%~1"=="--allow-unsupported-toolkit" goto :allow_unsupported
 if /I "%~1"=="--iso" goto :set_iso
 if /I "%~1"=="--toolkit" goto :set_toolkit
 if /I "%~1"=="--install-dir" goto :set_install_dir
@@ -26,6 +29,12 @@ exit /b 2
 :use_software
 set "SOFTWARE_ONLY=1"
 set "PRESET=clang-cl-software"
+shift
+goto :parse_arguments
+
+:allow_unsupported
+set "ALLOW_UNSUPPORTED=ON"
+set "TOOLKIT_OVERRIDE=--allow-unsupported-toolkit"
 shift
 goto :parse_arguments
 
@@ -136,6 +145,13 @@ if errorlevel 1 (
     python --version
     goto :exit
 )
+python -c "import sys; sys.exit(0 if sys.argv[1].isascii() else 'ERROR: The ISO path must use ASCII characters. Move the ISO to an ASCII-only path.')" "%ISO_PATH%"
+if errorlevel 1 goto :exit
+python tools\mga2\toolkit_identity.py --toolkit "%TOOLKIT_PATH%" %TOOLKIT_OVERRIDE%
+if errorlevel 1 (
+    set "FAILED_STEP=Toolkit verification"
+    goto :command_failed
+)
 
 if defined VSCMD_VER if /I "%VSCMD_ARG_TGT_ARCH%"=="x64" goto :visual_studio_ready
 call :find_vcvars64
@@ -191,7 +207,7 @@ if errorlevel 1 (
 
 echo.
 echo [2/6] Generating native game code...
-python tools\mga2\gen.py --toolkit "%TOOLKIT_PATH%"
+python tools\mga2\gen.py --toolkit "%TOOLKIT_PATH%" %TOOLKIT_OVERRIDE%
 if errorlevel 1 (
     set "FAILED_STEP=Code generation"
     goto :command_failed
@@ -199,7 +215,7 @@ if errorlevel 1 (
 
 echo.
 echo [3/6] Configuring the %PRESET% build...
-cmake --preset "%PRESET%" "-DPSP_RECOMP_DIR:PATH=%TOOLKIT_PATH%"
+cmake --preset "%PRESET%" "-DPSP_RECOMP_DIR:PATH=%TOOLKIT_PATH%" "-DMGA2_ALLOW_UNSUPPORTED_TOOLKIT:BOOL=%ALLOW_UNSUPPORTED%"
 if errorlevel 1 (
     set "FAILED_STEP=CMake configuration"
     goto :command_failed
@@ -259,7 +275,7 @@ if errorlevel 1 (
     set "FAILED_STEP=Copying the game launcher"
     goto :command_failed
 )
-python -c "from pathlib import Path; import sys; Path(sys.argv[1]).write_text(sys.argv[2] + '\n', encoding='mbcs')" "%INSTALL_DIR%\iso-path.txt" "%ISO_PATH%"
+python -c "from pathlib import Path; import sys; Path(sys.argv[1]).write_text(sys.argv[2] + '\n', encoding='ascii')" "%INSTALL_DIR%\iso-path.txt" "%ISO_PATH%"
 if errorlevel 1 (
     set "FAILED_STEP=Recording the ISO location"
     goto :command_failed
@@ -289,7 +305,7 @@ exit /b 0
 :print_usage
 echo Usage:
 echo   install.bat [--iso PATH] [--toolkit PATH] [--install-dir PATH]
-echo               [--software-only]
+echo               [--software-only] [--allow-unsupported-toolkit]
 echo.
 echo Options:
 echo   --iso PATH          Supported ULUS-10077 USA v1.00 ISO.
@@ -299,6 +315,7 @@ echo                       Default: PSP_RECOMP_DIR or ..\psp-recomp.
 echo   --install-dir PATH  Runnable output directory.
 echo                       Default: out\install\clang-cl or clang-cl-software.
 echo   --software-only     Build the software reference renderer without Vulkan.
+echo   --allow-unsupported-toolkit  Allow an unpinned or modified development toolkit.
 echo   --help, -h          Show this help.
 echo.
 echo This script checks prerequisites but does not install system software.

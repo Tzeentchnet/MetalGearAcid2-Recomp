@@ -10,15 +10,21 @@ permissions:
 
 jobs:
   source-checks:
-    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python-version: ["3.11", "3.12"]
+    runs-on: ${{ matrix.os }}
     steps:
       - name: Check out source
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: ${{ matrix.python-version }}
 
       - name: Run source-only tests
         run: python -m unittest discover -s tools/mga2/tests -p "test_*.py"
@@ -41,10 +47,5 @@ jobs:
               "87cebe80a93c4231bdbab26ad630c6d8e2fddab5"
           )
 
-      - name: Reject protected generated inputs
-        shell: bash
-        run: |
-          if git ls-files | grep -E -i '\.(iso|cso|pbp|prx|trace|ppm)$'; then
-            echo "Protected or generated game data is tracked."
-            exit 1
-          fi
+      - name: Reject protected release contents and history
+        run: python tools/mga2/check_release_contents.py

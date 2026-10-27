@@ -2,14 +2,22 @@
 """Analyze and generate cached native C for Metal Gear Acid 2's main PRX."""
 
 import argparse
+import filecmp
+import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
+import tempfile
 import tomllib
+
+from iso9660 import sha1_file
+from toolkit_identity import IDENTITY_FILE, identify_toolkit
 
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_TOOLKIT = ROOT.parent / "psp-recomp"
+SOURCE_MANIFEST = "mga2_generated_sources.txt"
 
 
 def parse_args(argv):
@@ -25,9 +33,9 @@ def parse_args(argv):
         default=ROOT / "build" / "mga2" / "gen",
     )
     parser.add_argument(
-        "--single",
+        "--allow-unsupported-toolkit",
         action="store_true",
-        help="emit one large C file instead of split translation units",
+        help="allow a modified, unpinned, or non-Git toolkit for development",
     )
     return parser.parse_args(argv[1:])
 
@@ -74,6 +82,17 @@ def resolve_function_catalog(tools, env):
     return (default, False) if default.is_file() else (None, False)
 
 
+def verify_prx(prx, expected_sha1):
+    if not prx.is_file():
+        raise ValueError(f"missing {prx}; run tools\\mga2\\extract.py first")
+    actual_sha1 = sha1_file(prx)
+    if actual_sha1 != expected_sha1:
+        raise ValueError(
+            f"SHA-1 mismatch for {prx}: {actual_sha1} != {expected_sha1}; "
+            "rerun tools\\mga2\\extract.py"
+        )
+
+
 def generate_prx(
     *,
     tools,
@@ -83,15 +102,10 @@ def generate_prx(
     out_dir,
     stem,
     env,
-    single,
+    expected_sha1,
     image_name=None,
 ):
-    if not prx.is_file():
-        print(
-            f"ERROR: missing {prx}; run tools\\mga2\\extract.py first",
-            file=sys.stderr,
-        )
-        return 1
+    verify_prx(prx, expected_sha1)
 
     out_dir.mkdir(parents=True, exist_ok=True)
     symbol_prefix = module.get("symbol_prefix")
@@ -205,8 +219,7 @@ def generate_prx(
                 "--verify-runtime-code",
             ]
         )
-    if not single:
-        codegen_command.append("--split")
+    codegen_command.append("--split")
     with log_path.open("w", encoding="utf-8") as log:
         result = run(codegen_command, env=env, stderr=log)
     print(log_path.read_text(encoding="utf-8"), end="")
@@ -221,8 +234,42 @@ def generate_prx(
     return 0
 
 
-def main(argv):
-    args = parse_args(argv)
+def collect_sources(staging, modules):
+    sources = []
+    for relative_dir, stem in modules:
+        if not re.fullmatch(r"[A-Za-z0-9_]+", stem):
+            raise ValueError(f"invalid generated module prefix: {stem}")
+        directory = staging / relative_dir
+        header = directory / f"{stem}_recomp.h"
+        register = directory / f"{stem}_recomp_register.c"
+        chunks = sorted(directory.glob(f"{stem}_recomp_[0-9][0-9][0-9].c"))
+        if not header.is_file() or not register.is_file() or not chunks:
+            raise ValueError(f"incomplete split generation for {stem} in {directory}")
+        sources.extend(
+            path.relative_to(staging).as_posix()
+            for path in [*chunks, register]
+        )
+    if not (staging / "mga2_image.bin").is_file():
+        raise ValueError("generation did not produce mga2_image.bin")
+    return sources
+
+
+def publish_generation(staging, output, sources):
+    output.mkdir(parents=True, exist_ok=True)
+    manifest = output / SOURCE_MANIFEST
+    manifest.unlink(missing_ok=True)
+    for path in sorted(path for path in staging.rglob("*") if path.is_file()):
+        destination = output / path.relative_to(staging)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        if destination.is_file() and filecmp.cmp(path, destination, shallow=False):
+            continue
+        os.replace(path, destination)
+    temporary_manifest = output / f".{SOURCE_MANIFEST}.tmp"
+    temporary_manifest.write_text("\n".join(sources) + "\n", encoding="utf-8")
+    os.replace(temporary_manifest, manifest)
+
+
+def generate(args):
     config_path = ROOT / "config" / "mga2.toml"
     with config_path.open("rb") as stream:
         config = tomllib.load(stream)
@@ -236,39 +283,90 @@ def main(argv):
         )
         return 1
 
+    identity = identify_toolkit(
+        args.toolkit,
+        config["runtime"]["commit"],
+        allow_unsupported=args.allow_unsupported_toolkit,
+    )
+    if identity["source_sha256"] is not None:
+        print(
+            "WARNING: using an unsupported or modified psp-recomp toolkit; "
+            "this is a development build, not the validated release.",
+            file=sys.stderr,
+        )
     env = prepare_environment()
     disc_dir = ROOT / "build" / "mga2" / "disc"
     main_module = config["module"]
-    result = generate_prx(
-        tools=tools,
-        codegen=codegen,
-        prx=disc_dir / Path(main_module["file"]),
-        module=main_module,
-        out_dir=args.out,
-        stem="mga2",
-        env=env,
-        single=args.single,
-        image_name="mga2_image.bin",
-    )
-    if result:
-        return result
+    main_hash = config["disc"]["files"][main_module["file"]]
+    native_modules = config.get("native_module", [])
+    verify_prx(disc_dir / Path(main_module["file"]), main_hash)
+    prefixes = set()
+    for module in native_modules:
+        prefix = module["symbol_prefix"]
+        if not re.fullmatch(r"[A-Za-z0-9_]+", prefix) or prefix in prefixes:
+            raise ValueError(f"invalid or duplicate generated module prefix: {prefix}")
+        prefixes.add(prefix)
+        verify_prx(disc_dir / Path(module["file"]), module["sha1"])
 
-    for module in config.get("native_module", []):
-        symbol_prefix = module["symbol_prefix"]
-        print(f"generating native module {symbol_prefix} ({module['file']})")
+    output = args.out.resolve()
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(
+        prefix=".mga2-gen-", dir=output.parent
+    ) as temporary:
+        staging = Path(temporary) / "gen"
         result = generate_prx(
             tools=tools,
             codegen=codegen,
-            prx=disc_dir / Path(module["file"]),
-            module=module,
-            out_dir=args.out / "modules" / symbol_prefix,
-            stem=symbol_prefix,
+            prx=disc_dir / Path(main_module["file"]),
+            module=main_module,
+            out_dir=staging,
+            stem="mga2",
             env=env,
-            single=args.single,
+            expected_sha1=main_hash,
+            image_name="mga2_image.bin",
         )
         if result:
             return result
+        generated_modules = [(Path(), "mga2")]
+        for module in native_modules:
+            symbol_prefix = module["symbol_prefix"]
+            print(f"generating native module {symbol_prefix} ({module['file']})")
+            relative_dir = Path("modules") / symbol_prefix
+            result = generate_prx(
+                tools=tools,
+                codegen=codegen,
+                prx=disc_dir / Path(module["file"]),
+                module=module,
+                out_dir=staging / relative_dir,
+                stem=symbol_prefix,
+                env=env,
+                expected_sha1=module["sha1"],
+            )
+            if result:
+                return result
+            generated_modules.append((relative_dir, symbol_prefix))
+        sources = collect_sources(staging, generated_modules)
+        if identify_toolkit(
+            args.toolkit,
+            config["runtime"]["commit"],
+            allow_unsupported=args.allow_unsupported_toolkit,
+        ) != identity:
+            raise ValueError("toolkit changed during generation; retry")
+        (staging / IDENTITY_FILE).write_text(
+            json.dumps(identity, indent=2) + "\n", encoding="utf-8"
+        )
+        publish_generation(staging, output, sources)
+        print(f"wrote {output / SOURCE_MANIFEST} ({len(sources)} sources)")
     return 0
+
+
+def main(argv):
+    args = parse_args(argv)
+    try:
+        return generate(args)
+    except (OSError, ValueError, KeyError, tomllib.TOMLDecodeError) as error:
+        print(f"ERROR: {error}", file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":

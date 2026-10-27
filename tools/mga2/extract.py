@@ -29,13 +29,12 @@ def parse_args(argv):
     return parser.parse_args(argv[1:])
 
 
-def write_entry(iso, entry, output_root):
-    data = iso.read(entry)
+def write_entry(entry, data, output_root):
     iso_path = entry.path.lstrip("/")
     destination = output_root.joinpath(*iso_path.split("/"))
     destination.parent.mkdir(parents=True, exist_ok=True)
     destination.write_bytes(data)
-    return data, destination
+    return destination
 
 
 def module_kind(data):
@@ -46,7 +45,7 @@ def module_kind(data):
     return "data"
 
 
-def main(argv):
+def extract_iso(argv):
     args = parse_args(argv)
     try:
         with args.config.open("rb") as stream:
@@ -74,15 +73,14 @@ def main(argv):
         return 1
     print(f"ISO SHA-1 ok ({actual_sha1})")
 
-    args.out.mkdir(parents=True, exist_ok=True)
     expected_files = config["disc"]["files"]
     module_hashes = {
-        module["file"]: module["sha1"]
+        module["file"].upper(): module["sha1"]
         for module in config.get("hle_module", [])
     }
     module_hashes.update(
         {
-            module["file"]: module["sha1"]
+            module["file"].upper(): module["sha1"]
             for module in config.get("native_module", [])
         }
     )
@@ -93,19 +91,22 @@ def main(argv):
     records = []
     failures = []
     extracted = set()
+    seen_modules = set()
+    pending = []
     with Iso(args.iso) as iso:
         for iso_path, expected_hash in expected_files.items():
             entry = iso.lookup(iso_path)
-            data, destination = write_entry(iso, entry, args.out)
+            data = iso.read(entry)
             actual_hash = hashlib.sha1(data).hexdigest()
             if actual_hash != expected_hash:
                 failures.append(
                     f"{iso_path}: {actual_hash} != {expected_hash}"
                 )
             extracted.add(iso_path.upper())
+            pending.append((entry, data))
             print(
                 f"  {iso_path:<52} {len(data):>10,} "
-                f"{actual_hash} -> {destination}"
+                f"{actual_hash}"
             )
 
         for entry in sorted(iso.files(), key=lambda value: value.path.upper()):
@@ -128,20 +129,29 @@ def main(argv):
                     "kind": kind,
                 }
             )
-            if (
-                iso_path in module_hashes
-                and actual_hash != module_hashes[iso_path]
-            ):
+            if upper in module_hashes:
+                seen_modules.add(upper)
+            if upper in module_hashes and actual_hash != module_hashes[upper]:
                 failures.append(
-                    f"{iso_path}: {actual_hash} != {module_hashes[iso_path]}"
+                    f"{iso_path}: {actual_hash} != {module_hashes[upper]}"
                 )
             if upper not in extracted:
-                _, destination = write_entry(iso, entry, args.out)
+                pending.append((entry, data))
                 print(
                     f"  {iso_path:<52} {len(data):>10,} "
-                    f"{actual_hash} {kind} -> {destination}"
+                    f"{actual_hash} {kind}"
                 )
 
+    for missing in sorted(module_hashes.keys() - seen_modules):
+        failures.append(f"configured module was not found: {missing}")
+    if failures:
+        for failure in failures:
+            print(f"ERROR: {failure}", file=sys.stderr)
+        return 1
+
+    args.out.mkdir(parents=True, exist_ok=True)
+    for entry, data in pending:
+        write_entry(entry, data, args.out)
     inventory_path = args.out.parent / "disc_inventory.json"
     inventory_path.write_text(
         json.dumps(
@@ -155,10 +165,6 @@ def main(argv):
         + "\n",
         encoding="utf-8",
     )
-    if failures:
-        for failure in failures:
-            print(f"ERROR: {failure}", file=sys.stderr)
-        return 1
     print(
         f"wrote {args.out}: "
         f"{sum(item['kind'] == 'elf' for item in records)} plaintext and "
@@ -166,6 +172,14 @@ def main(argv):
     )
     print(f"wrote {inventory_path}")
     return 0
+
+
+def main(argv):
+    try:
+        return extract_iso(argv)
+    except (OSError, ValueError, KeyError) as error:
+        print(f"ERROR: extraction failed: {error}", file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":

@@ -4,23 +4,31 @@
 from __future__ import annotations
 
 import csv
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
+import hashlib
 import json
 import math
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
+import tempfile
 from time import perf_counter
+
+from local_files import is_link_or_reparse_point
 
 
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_BUILD = ROOT / "out" / "build" / "clang-cl"
+ARENA_REPLAY_SHA256 = "89c976f6cbee3cff7976c835803f02ea3eb95058cfcae9bf1d80903b8a8979ba"
 FIXED_GRAPHICS_PROFILE = {
     "renderer": "d3d12",
     "internal_resolution": "4",
     "texture_scale": "2",
     "d3d12_full_rate": "1",
+    "anti_aliasing": "off",
+    "skip_startup": "off",
 }
 PERFORMANCE_COLUMNS = (
     "flip",
@@ -29,24 +37,6 @@ PERFORMANCE_COLUMNS = (
     "frontend_ms",
     "backend_ms",
     "gpu_ms",
-)
-CLEARED_ENVIRONMENT = (
-    "SR_D3D12_FRAMEBUFFER_SAFE",
-    "SR_D3D12_DISABLE_FEEDBACK_ALIASES",
-    "SR_D3D12_LEGACY_DEPTH_UPLOADS",
-    "SR_D3D12_LEGACY_FEEDBACK_SNAPSHOTS",
-    "SR_D3D12_LEGACY_DESTINATION_SNAPSHOTS",
-    "SR_GE_SCALAR_SPLINE",
-    "SR_GE_SPLINE_LOG",
-    "SR_NOVBPACE",
-    "SR_D3D12_SYNC_TEXTURE_DECODE",
-    "SR_D3D12_VERIFY_TEXTURE_DECODE",
-    "SR_D3D12_PSO_KEYS",
-    "SR_D3D12_NO_PSO_KEYS",
-    "SR_PERF_ALTERNATE",
-    "SR_PERF_ALTERNATE_PRESENTS",
-    "SR_TRACE_STALLS",
-    "SR_SLOW_FRAME_MS",
 )
 # Written by the runtime for host flips whose frame straddled an alternation change.
 ALTERNATE_TRANSITION_BIT = 0x80000000
@@ -65,6 +55,18 @@ class PerformanceThresholds:
     maximum_audio_underruns: int = 0
     maximum_audio_padding_transitions: int = 1
 
+    def __post_init__(self) -> None:
+        counters = {
+            "maximum_readbacks",
+            "maximum_audio_underruns",
+            "maximum_audio_padding_transitions",
+        }
+        for name, value in asdict(self).items():
+            if not math.isfinite(value) or value < 0 or (
+                name not in counters and value == 0
+            ):
+                raise ValueError(f"invalid benchmark threshold {name}: {value}")
+
 
 @dataclass(frozen=True)
 class BenchmarkCase:
@@ -73,6 +75,81 @@ class BenchmarkCase:
     required_present: int
     exit_after: int
     warmup_presentations: int = 0
+    input_pulse: int | None = None
+    input_mask: int = 0x2000
+    input_width: int = 20
+
+
+def validate_run_options(window: int, timeout: float) -> None:
+    if not 2 <= window <= 600:
+        raise ValueError("sample window must be between 2 and 600 host flips")
+    if not math.isfinite(timeout) or timeout <= 0:
+        raise ValueError("timeout must be finite and positive")
+
+
+def replay_sha256(path: Path) -> str:
+    # Git may check out the same replay with either LF or CRLF line endings.
+    return hashlib.sha256(path.read_bytes().replace(b"\r\n", b"\n")).hexdigest()
+
+
+def ensure_output_outside_fixture(output: Path, source: Path) -> None:
+    output = output.resolve()
+    source = source.resolve()
+    if output == source or source in output.parents:
+        raise ValueError(
+            f"output directory cannot be inside the memory-stick fixture: {output}"
+        )
+
+
+def copy_memstick_fixture(source: Path, destination: Path) -> str:
+    """Copy a fixture without leaving links back to the user's writable data."""
+    ensure_output_outside_fixture(destination, source)
+    if is_link_or_reparse_point(source):
+        raise ValueError(f"memory-stick fixture cannot be a link: {source}")
+    if source.exists():
+        if not source.is_dir():
+            raise ValueError(f"memory-stick fixture is not a directory: {source}")
+        def raise_walk_error(error: OSError) -> None:
+            raise error
+
+        for parent, directories, files in os.walk(
+            source, followlinks=False, onerror=raise_walk_error
+        ):
+            for name in directories + files:
+                path = Path(parent) / name
+                if is_link_or_reparse_point(path):
+                    raise ValueError(
+                        f"memory-stick fixture contains a link: {path}"
+                    )
+        shutil.copytree(source, destination)
+    else:
+        destination.mkdir(parents=True)
+
+    digest = hashlib.sha256()
+    for path in sorted(destination.rglob("*")):
+        name = path.relative_to(destination).as_posix().encode("utf-8")
+        if path.is_dir():
+            digest.update(b"D")
+        elif path.is_file():
+            digest.update(b"F")
+        else:
+            raise ValueError(f"unsupported memory-stick fixture entry: {path}")
+        digest.update(len(name).to_bytes(8, "big"))
+        digest.update(name)
+        if path.is_file():
+            digest.update(path.stat().st_size.to_bytes(8, "big"))
+            with path.open("rb") as stream:
+                for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                    digest.update(chunk)
+    return digest.hexdigest()
+
+
+def clean_runtime_environment() -> dict[str, str]:
+    return {
+        name: value
+        for name, value in os.environ.items()
+        if not name.upper().startswith(("SR_", "PSP_"))
+    }
 
 
 def require_file(path: Path, description: str) -> Path:
@@ -80,6 +157,23 @@ def require_file(path: Path, description: str) -> Path:
     if not resolved.is_file():
         raise ValueError(f"{description} does not exist: {resolved}")
     return resolved
+
+
+def require_arena_save(memstick: Path) -> Path:
+    if is_link_or_reparse_point(memstick):
+        raise ValueError(f"memory-stick fixture cannot be a link: {memstick}")
+    root = memstick.resolve()
+    save = root / "PSP" / "SAVEDATA" / "ULUS10077003"
+    for name, expected_size in {"PARAM.SFO": None, "00000000.000": 48_800}.items():
+        path = save / name
+        if not path.is_file():
+            raise ValueError(f"Arena save file does not exist: {path}")
+        if expected_size is not None and path.stat().st_size != expected_size:
+            raise ValueError(
+                f"Arena save file has size {path.stat().st_size}, "
+                f"expected {expected_size}: {path}"
+            )
+    return root
 
 
 def read_graphics_profile(
@@ -92,12 +186,18 @@ def read_graphics_profile(
     values: dict[str, str] = {}
     for line in path.read_text(encoding="ascii").splitlines():
         line = line.strip()
-        if not line or line.startswith("#"):
+        if not line or line.startswith(("#", ";")):
             continue
         if "=" not in line:
             raise ValueError(f"invalid graphics setting in {path}: {line}")
         name, value = line.split("=", 1)
-        values[name.strip()] = value.strip()
+        name = name.strip().lower()
+        value = value.strip().lower()
+        if not name or not value or name in values:
+            raise ValueError(f"invalid or duplicate graphics setting in {path}: {line}")
+        values[name] = value
+    values.setdefault("anti_aliasing", "off")
+    values.setdefault("skip_startup", "off")
     if required is not None:
         mismatches = [
             f"{name}={values.get(name)!r} (expected {expected!r})"
@@ -125,6 +225,7 @@ def load_samples(
     window: int,
     *,
     keep_all: bool = False,
+    require_gpu_sources: bool = False,
 ) -> list[dict[str, float]]:
     if window <= 0:
         raise ValueError("sample window must be positive")
@@ -148,11 +249,41 @@ def load_samples(
                     raise KeyError(name)
             if not all(math.isfinite(value) for value in sample.values()):
                 raise ValueError("non-finite value")
+            if sample["frame_ms"] <= 0:
+                raise ValueError("non-positive frame time")
+            if any(
+                sample[name] < 0 or not sample[name].is_integer()
+                for name in ("flip", "present")
+            ):
+                raise ValueError("invalid flip or presentation")
+            if "gpu_source_flip" in sample and (
+                sample["gpu_source_flip"] < 0
+                or not sample["gpu_source_flip"].is_integer()
+            ):
+                raise ValueError("invalid GPU source flip")
             parsed.append(sample)
         except (KeyError, TypeError, ValueError) as error:
             raise ValueError(f"invalid performance row: {row}") from error
+    if any(
+        later["flip"] <= earlier["flip"]
+        or later["present"] < earlier["present"]
+        for earlier, later in zip(parsed, parsed[1:])
+    ):
+        raise ValueError("performance rows are not in presentation order")
     samples = parsed if keep_all else parsed[:window]
+    if require_gpu_sources and not all(
+        "gpu_source_flip" in sample for sample in parsed
+    ):
+        raise ValueError("GPU source-flip identities are missing")
     if any("gpu_source_flip" in sample for sample in parsed):
+        source_flips = [
+            int(sample["gpu_source_flip"])
+            for sample in parsed
+            if sample.get("gpu_source_flip", 0.0) > 0.0
+            and sample["gpu_ms"] >= 0.0
+        ]
+        if len(source_flips) != len(set(source_flips)):
+            raise ValueError("duplicate GPU source-flip identities")
         gpu_by_flip = {
             int(sample["gpu_source_flip"]): sample["gpu_ms"]
             for sample in parsed
@@ -213,17 +344,19 @@ def describe_delivery(samples: list[dict[str, float]]) -> dict[str, float | int]
             "delivered_p50_ms": -1.0,
             "delivered_p95_ms": -1.0,
             "delivered_maximum_ms": -1.0,
+            "terminal_delivery_interval_ms": elapsed_ms,
         }
     sorted_intervals = sorted(intervals)
-    average = sum(intervals) / len(intervals)
+    observation_ms = sum(intervals) + elapsed_ms
     return {
         "delivered_frames": len(intervals),
         "repeated_host_flips": repeated_flips,
-        "delivered_fps": 1000.0 / average,
-        "delivered_average_ms": average,
+        "delivered_fps": 1000.0 * len(intervals) / observation_ms,
+        "delivered_average_ms": observation_ms / len(intervals),
         "delivered_p50_ms": percentile(sorted_intervals, 0.50),
         "delivered_p95_ms": percentile(sorted_intervals, 0.95),
         "delivered_maximum_ms": sorted_intervals[-1],
+        "terminal_delivery_interval_ms": elapsed_ms,
     }
 
 
@@ -271,9 +404,19 @@ def summarize(
         raise ValueError("performance sample is empty")
     frames = sorted(sample["frame_ms"] for sample in samples)
     average = sum(frames) / len(frames)
-    first_present = int(min(sample["present"] for sample in samples))
-    last_present = int(max(sample["present"] for sample in samples))
-    if not first_present <= required_present <= last_present:
+    presentations = [int(sample["present"]) for sample in samples]
+    first_present = presentations[0]
+    last_present = presentations[-1]
+    if any(later < earlier for earlier, later in zip(
+        presentations, presentations[1:]
+    )):
+        raise ValueError("performance presentations are not in order")
+    observed = required_present in presentations
+    crossed = any(
+        earlier < required_present < later
+        for earlier, later in zip(presentations, presentations[1:])
+    )
+    if not observed and not crossed:
         raise ValueError(
             f"sample {first_present}-{last_present} does not include "
             f"required presentation {required_present}"
@@ -297,6 +440,8 @@ def summarize(
         "first_present": first_present,
         "last_present": last_present,
         "required_present": required_present,
+        "checkpoint_evidence": "observed" if observed else "crossed",
+        "sample_duration_ms": sum(sample["frame_ms"] for sample in samples),
         "host_flip_fps": 1000.0 / average,
         "average_ms": average,
         "p50_ms": percentile(frames, 0.50),
@@ -374,7 +519,7 @@ def parse_audio_stats(stderr: str) -> dict[str, object]:
         padding_transitions,
         voice_error,
     ) = matches[-1]
-    return {
+    result = {
         "audio_played_frames": int(played_frames),
         "audio_played_ms": float(played_ms),
         "audio_clock_drift_ms": float(clock_drift_ms),
@@ -388,6 +533,57 @@ def parse_audio_stats(stderr: str) -> dict[str, object]:
         "audio_padding_blocks": int(padding_blocks),
         "audio_padding_transitions": int(padding_transitions),
         "audio_voice_error": bool(voice_error),
+    }
+    if not all(math.isfinite(float(result[name])) for name in (
+        "audio_played_ms",
+        "audio_clock_drift_ms",
+    )):
+        raise ValueError("XAudio2 shutdown statistics contain non-finite values")
+    return result
+
+
+def find_input_event(stderr: str, case: BenchmarkCase) -> dict[str, int] | None:
+    if case.input_pulse is None:
+        return None
+    for frame, present, vblank, mask in re.findall(
+        r"^PADSCRIPT clock=present frame=(\d+) present=(\d+) "
+        r"vblank=(\d+) mask=0x([0-9a-fA-F]+)\s*$",
+        stderr,
+        flags=re.MULTILINE,
+    ):
+        frame_value = int(frame)
+        mask_value = int(mask, 16)
+        if (
+            case.input_pulse <= frame_value < case.input_pulse + case.input_width
+            and mask_value & case.input_mask == case.input_mask
+        ):
+            return {
+                "frame": frame_value,
+                "present": int(present),
+                "vblank": int(vblank),
+                "mask": mask_value,
+            }
+    return None
+
+
+def parse_runtime_profile(stderr: str) -> dict[str, str] | None:
+    matches = re.findall(
+        r"graphics: loaded [^\r\n]* \(renderer ([^,]+), "
+        r"internal resolution (\d+)x, texture scale (\d+)x, "
+        r"D3D12 full-rate (on|off), anti-aliasing ([^,]+), "
+        r"startup skip (on|off)\)",
+        stderr,
+    )
+    if not matches:
+        return None
+    renderer, resolution, texture_scale, full_rate, anti_aliasing, skip = matches[-1]
+    return {
+        "renderer": renderer,
+        "internal_resolution": resolution,
+        "texture_scale": texture_scale,
+        "d3d12_full_rate": "1" if full_rate == "on" else "0",
+        "anti_aliasing": anti_aliasing,
+        "skip_startup": skip,
     }
 
 
@@ -437,6 +633,17 @@ def validate(
             f"maximum delivered frame {delivered_maximum_ms:.2f} ms exceeds "
             f"{thresholds.maximum_delivered_frame_ms:.2f} ms"
         )
+    terminal_ms = float(summary["terminal_delivery_interval_ms"])
+    if terminal_ms > thresholds.maximum_delivered_frame_ms:
+        failures.append(
+            f"ongoing terminal delivery interval {terminal_ms:.2f} ms exceeds "
+            f"{thresholds.maximum_delivered_frame_ms:.2f} ms"
+        )
+    if int(summary["gpu_samples"]) != int(summary["samples"]):
+        failures.append(
+            f"GPU timing coverage is {int(summary['gpu_samples'])}/"
+            f"{int(summary['samples'])} samples"
+        )
     if gpu_maximum_ms < 0.0:
         failures.append("GPU timing samples are missing")
     elif gpu_maximum_ms > thresholds.maximum_gpu_ms:
@@ -453,6 +660,15 @@ def validate(
         failures.append("no framebuffer texture aliases were used")
     if feedback_snapshots <= 0:
         failures.append("no framebuffer feedback snapshots were used")
+    if (
+        int(summary["audio_played_frames"]) <= 0
+        or float(summary["audio_played_ms"]) < float(summary["sample_duration_ms"])
+    ):
+        failures.append("insufficient XAudio2 playback for the sample duration")
+    if summary["required_input_event"] is None:
+        failures.append("required replay input event was not observed")
+    if summary["runtime_profile"] != FIXED_GRAPHICS_PROFILE:
+        failures.append("effective runtime graphics profile is missing or nonstandard")
     if int(summary["audio_dropped_frames"]) > 0:
         failures.append(
             f"audio dropped {int(summary['audio_dropped_frames'])} frames"
@@ -496,6 +712,12 @@ def run_benchmark_case(
     fast_forward: bool = False,
     extra_environment: dict[str, str] | None = None,
 ) -> dict[str, object]:
+    validate_run_options(window, timeout)
+    if validate_result and (unpaced or fast_forward or extra_environment):
+        raise ValueError("diagnostic runtime overrides cannot validate acceptance")
+    if validate_result and case.input_pulse is None:
+        raise ValueError("acceptance requires a replay input checkpoint")
+    ensure_output_outside_fixture(output, memstick)
     output.mkdir(parents=True, exist_ok=False)
     perf_path = output / "perf.csv"
     stdout_path = output / "stdout.log"
@@ -503,18 +725,16 @@ def run_benchmark_case(
     alternating = bool(
         extra_environment and extra_environment.get("SR_PERF_ALTERNATE")
     )
-    environment = os.environ.copy()
-    for name in CLEARED_ENVIRONMENT:
-        environment.pop(name, None)
+    environment = clean_runtime_environment()
     # Production writes and reads a persistent PSO key list; benchmarks start cold unless a
     # list is requested, so runs stay comparable with the historical results.
     environment["SR_D3D12_NO_PSO_KEYS"] = "1"
     environment.update(
         {
             "PSP_ISO": str(iso),
-            "SR_MEMSTICK": str(memstick),
             "SR_INPUT_CONFIG": "0",
             "SR_INPUT_HOT_RELOAD": "0",
+            "SR_PADLOG": "1",
             "SR_PADSCRIPT": str(pad_script),
             "SR_PERF_START": str(case.start),
             "SR_PERF_WINDOW": str(window),
@@ -550,18 +770,22 @@ def run_benchmark_case(
         "none",
         "--gui",
     ]
-    started = perf_counter()
-    with stdout_path.open("wb") as stdout, stderr_path.open("wb") as stderr:
-        result = subprocess.run(
-            command,
-            cwd=ROOT,
-            env=environment,
-            stdout=stdout,
-            stderr=stderr,
-            timeout=timeout,
-            check=False,
-        )
-    wall_seconds = perf_counter() - started
+    with tempfile.TemporaryDirectory(prefix="mga2-benchmark-") as temporary:
+        isolated_memstick = Path(temporary) / "memstick"
+        fixture_sha256 = copy_memstick_fixture(memstick, isolated_memstick)
+        environment["SR_MEMSTICK"] = str(isolated_memstick)
+        started = perf_counter()
+        with stdout_path.open("wb") as stdout, stderr_path.open("wb") as stderr:
+            result = subprocess.run(
+                command,
+                cwd=ROOT,
+                env=environment,
+                stdout=stdout,
+                stderr=stderr,
+                timeout=timeout,
+                check=False,
+            )
+        wall_seconds = perf_counter() - started
     stderr_text = stderr_path.read_text(encoding="utf-8", errors="replace")
     if result.returncode:
         tail = "\n".join(stderr_text.splitlines()[-20:])
@@ -569,7 +793,7 @@ def run_benchmark_case(
             f"{case.name} runtime exited with {result.returncode}\n{tail}"
         )
     summary = summarize(
-        load_samples(perf_path, window),
+        load_samples(perf_path, window, require_gpu_sources=validate_result),
         case.required_present,
     )
     if alternating:
@@ -580,17 +804,34 @@ def run_benchmark_case(
         parse_framebuffer_stats(stderr_text, required=renderer == "d3d12")
     )
     summary.update(parse_audio_stats(stderr_text))
+    summary["required_input_event"] = find_input_event(stderr_text, case)
+    summary["runtime_profile"] = parse_runtime_profile(stderr_text)
     summary.update(
         {
             "case": case.name,
-            "mode": "unpaced" if unpaced else "paced",
-            "startup": "fast-forward" if fast_forward else "real-time",
+            "mode": "unpaced" if "SR_NOVBPACE" in environment else "paced",
+            "startup": (
+                "fast-forward"
+                if environment.get("SR_FAST_FORWARD_PRESENT", "") not in ("", "0")
+                else "real-time"
+            ),
             "renderer": renderer,
             "wall_seconds": wall_seconds,
             "tail_presents": tail_presents,
             "profile": profile,
             "executable": str(executable),
             "pad_script": str(pad_script),
+            "pad_script_sha256": replay_sha256(pad_script),
+            "memstick_source": str(memstick),
+            "memstick_sha256": fixture_sha256,
+            "audio_window_verified": False,
+            "thresholds": asdict(thresholds),
+            "window": window,
+            "effective_runtime_environment": {
+                name: value
+                for name, value in environment.items()
+                if name.upper().startswith(("SR_", "PSP_"))
+            },
             "extra_environment": dict(extra_environment or {}),
         }
     )

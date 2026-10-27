@@ -4,15 +4,17 @@ This document records the fixed-quality Arena performance investigation: what
 was measured, which optimizations were retained, which experiments were
 rejected, and where future work should begin.
 
-The retained configuration passes the fixed profile for the Dead Cell
-introduction and Fortune transition. Arena gameplay remains the limiting case:
-the latest post-`/O2` run is substantially improved over the unoptimized
-runtime, but still misses the fixed gameplay gate.
+Earlier runs reported fixed-profile passes for the Dead Cell introduction and
+Fortune transition. The benchmark gates have since been strengthened, and
+those results have not been revalidated with the current harness. Arena
+gameplay remains the limiting historical case: the latest post-`/O2` run was
+substantially improved over the unoptimized runtime but missed its gate.
 
 The benchmark driver now supports `--tail-presents` to keep the runtime alive
 long enough to collect a complete sample window after a slow scene, and
 `--fortune-extra-presents` plus `--fortune-window` for longer transition
 diagnostics. The runtime currently caps `SR_PERF_WINDOW` at 600 samples.
+Extended windows and tails are diagnostic, not fixed-contract acceptance.
 Each result records wall-clock duration so startup/iteration cost is visible
 separately from frame time.
 
@@ -45,9 +47,8 @@ The first corrected full-route Fortune run
 30.99 newly delivered frames/s. Delivered-frame p95 was 33.37 ms and the
 maximum was 34.76 ms. Continuous XAudio2 playback covered 196.97 seconds with
 zero dropped frames, underruns, extra padding transitions, or voice errors.
-This establishes that the former 59.94 result was refresh cadence, not game
-FPS, while this run's Fortune segment maintained a stable approximately
-30 FPS delivery cadence.
+This historical measurement illustrates that the former 59.94 result was
+refresh cadence, not game FPS. It is not a pass against the current gates.
 
 ## Acceptance contract
 
@@ -60,7 +61,8 @@ python tools\mga2\benchmark_arena.py `
 
 The memory-stick fixture must contain
 `PSP\SAVEDATA\ULUS10077003\00000000.000` with a size of exactly 48,800
-bytes. Game-derived saves, logs, captures, and generated code remain ignored.
+bytes. Each case uses a fresh temporary copy, and records its content hash.
+Game-derived saves, logs, captures, and generated code remain ignored.
 
 The two default cases are:
 
@@ -86,21 +88,26 @@ following fixed profile:
 - 4x internal resolution;
 - 2x xBRZ texture scaling;
 - full-rate 1x1 shading;
+- anti-aliasing and startup skip off;
 - at least 59 displayed FPS;
 - at least 29 newly delivered game frames per second;
 - p95 no greater than 18 ms;
 - no frame above 33.4 ms;
 - delivered-frame p95 no greater than 35 ms;
 - no delivered frame above 50 ms;
-- no GPU sample above 16.68 ms;
-- no audio drops, underruns, excess post-startup padding transitions, or
-  XAudio2 voice errors;
+- complete aligned GPU timing coverage, with no sample above 16.68 ms;
+- positive aggregate audio playback at least as long as the sample, with no
+  drops, underruns, excess padding transitions, or XAudio2 voice errors;
 - at most four cumulative framebuffer readbacks; and
 - nonzero framebuffer aliases and ordered feedback snapshots.
 
-`SR_NOVBPACE=1`, `SR_GEDUMP=1`, legacy feedback snapshots, forced fallback,
-and reduced-quality profiles are diagnostic only and cannot produce an
-acceptance pass.
+The canonical replay and expected input pulse must be observed in the runtime
+log. The requested presentation may be observed directly or crossed between
+adjacent host flips; the summary distinguishes the two. Aggregate audio
+shutdown counters do not establish continuous audio during the sample itself.
+`SR_NOVBPACE=1`, `SR_GEDUMP=1`, other custom environment settings, changed
+thresholds, non-default sample windows, and reduced-quality profiles are
+diagnostic only and cannot produce an acceptance pass.
 
 ## Measurement infrastructure added
 

@@ -16,14 +16,17 @@ from benchmark_common import (
     PerformanceThresholds,
     ROOT,
     read_graphics_profile,
+    replay_sha256,
     require_file,
     run_benchmark_case,
+    validate_run_options,
 )
 
 DEFAULT_START = 30_900
 DEFAULT_PULSE = 31_000
 DEFAULT_EXIT = 31_400
 DEFAULT_WINDOW = 120
+TUTORIAL_REPLAY_SHA256 = "d9847da7b97410aee4354718186e8cd080e5f39bca7435db7c0bbb1fed0c39bb"
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
@@ -80,16 +83,21 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 def main(argv: list[str]) -> int:
     args = parse_args(argv)
     try:
-        if args.window <= 0:
-            raise ValueError("--window must be positive")
+        validate_run_options(args.window, args.timeout)
         if args.start >= args.pulse or args.pulse >= args.exit:
             raise ValueError("--start, --pulse, and --exit must be increasing")
+        thresholds = PerformanceThresholds(
+            minimum_fps=args.minimum_fps,
+            maximum_p95_ms=args.maximum_p95_ms,
+            maximum_frame_ms=args.maximum_frame_ms,
+            maximum_gpu_ms=args.maximum_gpu_ms,
+            maximum_readbacks=args.maximum_readbacks,
+        )
         executable = require_file(args.executable, "executable")
         image = require_file(args.image, "generated image")
         iso = require_file(args.iso, "game ISO")
         pad_script = require_file(args.pad_script, "pad script")
         profile = read_graphics_profile(executable)
-        args.memstick.resolve().mkdir(parents=True, exist_ok=True)
         output = (
             args.output.resolve()
             if args.output
@@ -98,12 +106,12 @@ def main(argv: list[str]) -> int:
             / "benchmarks"
             / f"tutorial-{strftime('%Y%m%d-%H%M%S')}"
         )
-        thresholds = PerformanceThresholds(
-            minimum_fps=args.minimum_fps,
-            maximum_p95_ms=args.maximum_p95_ms,
-            maximum_frame_ms=args.maximum_frame_ms,
-            maximum_gpu_ms=args.maximum_gpu_ms,
-            maximum_readbacks=args.maximum_readbacks,
+        fixed_profile = (
+            thresholds == PerformanceThresholds()
+            and args.window == DEFAULT_WINDOW
+            and (args.start, args.pulse, args.exit)
+            == (DEFAULT_START, DEFAULT_PULSE, DEFAULT_EXIT)
+            and replay_sha256(pad_script) == TUTORIAL_REPLAY_SHA256
         )
         summary = run_benchmark_case(
             case=BenchmarkCase(
@@ -111,20 +119,24 @@ def main(argv: list[str]) -> int:
                 start=args.start,
                 required_present=args.pulse,
                 exit_after=args.exit,
+                input_pulse=args.pulse,
             ),
             executable=executable,
             image=image,
             iso=iso,
-            memstick=args.memstick.resolve(),
+            memstick=args.memstick.absolute(),
             pad_script=pad_script,
             output=output,
             profile=profile,
             thresholds=thresholds,
             window=args.window,
             timeout=args.timeout,
+            validate_result=fixed_profile,
         )
         print(json.dumps(summary, indent=2))
         print(f"artifacts: {output}")
+        if not fixed_profile:
+            print("Diagnostic run only; no fixed-profile acceptance result.")
         if summary["failures"]:
             for failure in summary["failures"]:
                 print(f"FAIL: {failure}", file=sys.stderr)

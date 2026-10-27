@@ -3,6 +3,13 @@
 This document records the validated scope for the `v0.1.0` prerelease. It is
 not a full-game compatibility statement.
 
+> [!IMPORTANT]
+> The measurements and pass labels below are historical. The benchmark and
+> visual-validation tools have since gained stricter evidence checks; the
+> recorded runs have not been repeated with those checks. Pixel similarity
+> alone does not establish scene identity, and aggregate audio counters do not
+> establish continuous playback during a sample.
+
 ## Current status
 
 - The disc and main executable are pinned and verified.
@@ -34,7 +41,7 @@ not a full-game compatibility statement.
   run is pending and Arena gameplay remains below the fixed-quality 60-FPS
   target.
 
-## Validation matrix
+## Historical validation matrix
 
 | Level | Status | Evidence |
 |---|---|---|
