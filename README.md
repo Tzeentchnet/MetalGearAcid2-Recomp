@@ -41,14 +41,17 @@ The combined launcher offers **Automatic**, **D3D12 hardware**,
 **Software reference**, and **Vulkan**. Automatic selects D3D12 when it is
 compiled in.
 
-For the highest-quality 4K path:
+Start at a moderate internal resolution such as 3x or 4x and lower it if
+gameplay or audio slows down. For a higher-quality 4K path, if your GPU has
+enough headroom:
 
 1. Select **D3D12 hardware** or **Vulkan**.
 2. Select **8x (3840x2176)** internal resolution.
 3. Select **2x xBRZ** or **3x xBRZ** texture upscaling.
 4. When using D3D12, select **Full resolution (best quality)** shading.
 5. Optionally select **SMAA 1x High** for additional edge smoothing on D3D12.
-6. Press **F11** in the game window for borderless desktop fullscreen.
+6. Choose a **Character outlines** mode as described below.
+7. Press **F11** in the game window for borderless desktop fullscreen.
 
 The PSP display is 480:272, so 8x is 3840x2176 rather than exactly 3840x2160.
 Presentation preserves that aspect ratio and adds a few black pixels on a UHD
@@ -74,6 +77,23 @@ variable-rate shading on supported GPUs; **Full resolution** shades every
 internal-resolution fragment and is the appropriate D3D12 setting for 4K
 screenshots.
 
+SMAA smooths the final image, but some character outlines can still look
+blocky at high resolutions because the game generates them from framebuffer
+feedback. xBRZ does not affect those framebuffer textures. The launcher
+offers three **Character outlines** modes:
+
+- **Original** (default) retains the existing rendering.
+- **Sharper** keeps detected outlines and samples their feedback at the
+  internal resolution. It requires D3D12 or Vulkan and has no visual effect
+  at native 1x resolution.
+- **Off** hides detected character outlines and also works with the software
+  renderer.
+
+These are targeted enhancements, not a guarantee that every outline in every
+scene is detected. They have been tested in selected tutorial and Arena
+scenes; see the
+[outline investigation](docs/FINDINGS.md#mga2-f-020---character-outline-pixelation).
+
 ## Startup shortcut
 
 Enable **Skip startup sequence (go directly to main menu)** in the launcher
@@ -86,7 +106,8 @@ disabled by default and does not bypass memory-stick or title initialization.
 Settings are persisted in `graphics.ini` beside the executable. The equivalent
 keys are `renderer`, `internal_resolution`, `texture_scale`, and
 `d3d12_full_rate`; `anti_aliasing` accepts `off` or `smaa`, and
-`skip_startup` accepts `off` or `on`.
+`skip_startup` accepts `off` or `on`. `outlines` accepts `original`, `sharper`,
+or `off`.
 
 ## Requirements
 

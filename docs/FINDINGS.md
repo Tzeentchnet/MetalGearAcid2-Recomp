@@ -775,3 +775,65 @@ objects. Per-swapchain-image semaphores and complete backend teardown removed
 both errors. Final 1x and 2x scene runs use the same pixel gates with
 `SR_VK_VALIDATION=1`; successful execution without validation diagnostics is
 part of the acceptance result.
+
+## MGA2-F-020 - Character outline pixelation
+
+**Status:** Opt-in launcher options implemented; sampled-scene validation
+
+On D3D12, SMAA is an existing launcher option and operates on the final
+internal-resolution image. A comparison at 4x internal resolution, native
+textures, and full-rate shading confirmed that SMAA runs, but it does not
+remove the large steps in the character outline. Texture scaling does not
+apply to framebuffer feedback.
+
+The Arena gameplay capture at presentation 38,000 exposes the effect in the
+GE stream. The game draws 240 sprites using the active 512-stride 5551
+framebuffer as a 512x512 CLUT16 texture, with source and destination shifted
+by one PSP pixel in each diagonal direction. The repeated draws use an alpha
+test and a dark vertex color. This is the same indexed-framebuffer feedback
+class described in MGA2-F-016, not an ordinary texture.
+
+The default **Original** mode retains the previous native-texel feedback.
+**Sharper** samples detected outline feedback at physical render-target
+resolution on D3D12 and Vulkan; at 1x it preserves the original sampling.
+**Off** skips detected sprites on all three renderers. The title-specific
+detector requires the observed same-target CLUT16/5551 layout, alpha and
+stencil tests, modulate state, a dark vertex color, and a one-pixel diagonal
+offset. It rejects active mip filtering, blending, logic operations, and
+native RGB masks. Its cached feedback is limited to a CLUT index derived
+solely from the 5551 alpha bit with KEEP stencil operations. Other states use
+the normal renderer, rather than broadly suppressing indexed feedback.
+
+At 4x, the opening tutorial's purple outline and Arena's dark outline both
+responded to Sharper and Off. In one tutorial capture, Sharper changed 3,686
+pixels and Off changed 18,221 relative to Original; partially filled 4x4
+blocks in the character region increased from 888 to 1,704 with Sharper.
+D3D12 and Vulkan produced identical tutorial captures for both modes.
+Sampled Arena captures closely matched across backends, and native-resolution
+Original and Sharper captures were identical. Vulkan validation reported no
+warnings or errors on the tested paths. A software-renderer Arena capture also
+confirmed that Off changes the outline.
+
+In the sampled tutorial, Vulkan's Original mode already differed visibly from
+D3D12's Original mode. A native capture from the previous installed executable
+matched the new Vulkan Original capture byte-for-byte; this existing backend
+difference is not changed by the outline options.
+
+Vulkan's recognized, depth-disabled outline state reuses the alpha-only
+feedback snapshot for its stencil check and writes RGB directly. This avoids
+copying the full scaled destination for every outline sprite. Other states
+retain the destination-aware path. In a short paced Arena cutscene at 4x,
+Vulkan Sharper held about 60 host flips/s; the 95th-percentile frame time
+improved from 29.0 ms before this optimization to 17.8 ms afterward. A short
+8x sample measured 59.9 host flips/s and a 20.4 ms 95th percentile. Both
+samples reported zero audio underruns, although the 8x sample recorded one
+padding transition and audio resynchronization during the run. These are
+short measurements on one machine, not a full-game performance or audio
+guarantee; high resolution can still cause slowdown.
+
+These options change rendering semantics above 1x and are deliberately
+limited to observed outline states, not all framebuffer feedback. The
+tutorial and Arena captures do not establish coverage of every scene or
+effect. The opt-in tests in `tools/mga2/tests/test_outline_rendering.py`
+exercise recorded scenes when an isolated Arena save is supplied, and
+`test_outline_ui.py` can check the launcher on an interactive Windows desktop.

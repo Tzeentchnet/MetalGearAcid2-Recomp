@@ -134,8 +134,30 @@ endif()
 list(LENGTH MGA2_GEN_SRCS MGA2_GEN_COUNT)
 message(STATUS "MGA2 generated translation units: ${MGA2_GEN_COUNT}")
 
+set(MGA2_RUNTIME_INPUTS "${CMAKE_SOURCE_DIR}/tools/mga2/runtime")
+set(MGA2_RUNTIME_OVERLAY "${CMAKE_BINARY_DIR}/mga2-runtime-overlay")
+set(MGA2_RUNTIME_PREPARE
+    "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tools/mga2/prepare_runtime.py"
+    --toolkit "${PSP_RECOMP_DIR}"
+    --overlay "${MGA2_RUNTIME_OVERLAY}"
+    --patch "${MGA2_RUNTIME_INPUTS}/outline.patch"
+    --shaders "${MGA2_RUNTIME_INPUTS}")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+  "${CMAKE_SOURCE_DIR}/tools/mga2/prepare_runtime.py"
+  "${MGA2_RUNTIME_INPUTS}/outline.patch"
+  "${MGA2_RUNTIME_INPUTS}/psp_ps.inc"
+  "${MGA2_RUNTIME_INPUTS}/psp_ps_direct.inc"
+  "${MGA2_RUNTIME_INPUTS}/psp_frag.inc")
+execute_process(
+  COMMAND ${MGA2_RUNTIME_PREPARE}
+  RESULT_VARIABLE MGA2_RUNTIME_RESULT)
+if(NOT MGA2_RUNTIME_RESULT STREQUAL "0")
+  message(FATAL_ERROR "Could not prepare the title runtime overlay.")
+endif()
+
 add_custom_target(mga2_verify_toolkit
   COMMAND ${MGA2_TOOLKIT_CHECK}
+  COMMAND ${MGA2_RUNTIME_PREPARE} --verify
   COMMENT "Verifying psp-recomp toolkit identity"
   VERBATIM)
 add_library(mga2_game STATIC ${MGA2_GEN_SRCS})
@@ -152,7 +174,8 @@ else()
     ${MGA2_FP_FLAGS} "$<$<CONFIG:Release>:-O2>")
 endif()
 
-set(RT "${PSP_RECOMP_DIR}/src/rt")
+set(RT "${MGA2_RUNTIME_OVERLAY}/src/rt")
+set(MGA2_RUNTIME_TESTS "${MGA2_RUNTIME_OVERLAY}/tools/tests")
 set(AT3 "${PSP_RECOMP_DIR}/third_party/at3_standalone")
 add_library(mga2_at3 STATIC
   ${AT3}/atrac.cpp
@@ -195,7 +218,7 @@ set(MGA2_RUNTIME_SRCS
   ${RT}/fpu_mode.c
   ${RT}/fps_counter.c
   ${RT}/interp_runtime.cpp
-  ${PSP_RECOMP_DIR}/src/ref/interp.cpp
+  ${MGA2_RUNTIME_OVERLAY}/src/ref/interp.cpp
   ${RT}/module.c
   ${RT}/vfpu_interp.c
   ${RT}/vfpu_asin.c
@@ -256,8 +279,11 @@ endif()
 add_executable(mga2_driver
   ${RT}/driver.c
   tools/mga2/module_policy.c
+  tools/mga2/outline_policy.c
   ${MGA2_RUNTIME_SRCS})
-target_include_directories(mga2_driver PRIVATE "${RT}")
+add_dependencies(mga2_driver mga2_verify_toolkit)
+target_include_directories(mga2_driver PRIVATE
+  "${RT}" "${CMAKE_SOURCE_DIR}/tools/mga2")
 target_compile_features(mga2_driver PRIVATE cxx_std_17)
 if(CMAKE_C_SIMULATE_ID STREQUAL "MSVC")
   target_compile_options(mga2_driver PRIVATE ${MGA2_FP_FLAGS}
@@ -327,27 +353,27 @@ add_custom_command(TARGET mga2_driver POST_BUILD
 include(CTest)
 if(BUILD_TESTING)
   add_executable(mga2_display_state_tests EXCLUDE_FROM_ALL
-    ${PSP_RECOMP_DIR}/tools/tests/display_state_test.c
+    ${MGA2_RUNTIME_TESTS}/display_state_test.c
     ${RT}/display_state.c)
   target_include_directories(mga2_display_state_tests PRIVATE "${RT}")
   target_compile_options(mga2_display_state_tests PRIVATE ${MGA2_FP_FLAGS})
   add_test(NAME mga2_display_state COMMAND mga2_display_state_tests)
 
   add_executable(mga2_perf_stats_tests EXCLUDE_FROM_ALL
-    ${PSP_RECOMP_DIR}/tools/tests/perf_stats_test.c
+    ${MGA2_RUNTIME_TESTS}/perf_stats_test.c
     ${RT}/perf_stats.c)
   target_include_directories(mga2_perf_stats_tests PRIVATE "${RT}")
   target_compile_options(mga2_perf_stats_tests PRIVATE ${MGA2_FP_FLAGS})
   add_test(NAME mga2_perf_stats COMMAND mga2_perf_stats_tests)
 
   add_executable(mga2_ge_patch_math_tests EXCLUDE_FROM_ALL
-    ${PSP_RECOMP_DIR}/tools/tests/ge_patch_math_test.c)
+    ${MGA2_RUNTIME_TESTS}/ge_patch_math_test.c)
   target_include_directories(mga2_ge_patch_math_tests PRIVATE "${RT}")
   target_compile_options(mga2_ge_patch_math_tests PRIVATE ${MGA2_FP_FLAGS})
   add_test(NAME mga2_ge_patch_math COMMAND mga2_ge_patch_math_tests)
 
   add_executable(mga2_graphics_config_tests EXCLUDE_FROM_ALL
-    ${PSP_RECOMP_DIR}/tools/tests/graphics_config_test.c
+    ${MGA2_RUNTIME_TESTS}/graphics_config_test.c
     ${RT}/graphics_config.c
     ${RT}/settings_path.c)
   target_include_directories(mga2_graphics_config_tests PRIVATE "${RT}")
@@ -356,9 +382,40 @@ if(BUILD_TESTING)
   target_compile_options(mga2_graphics_config_tests PRIVATE ${MGA2_FP_FLAGS})
   add_test(NAME mga2_graphics_config COMMAND mga2_graphics_config_tests)
 
+  add_executable(mga2_outline_config_tests EXCLUDE_FROM_ALL
+    tools/mga2/tests/outline_config_test.c
+    ${RT}/graphics_config.c
+    ${RT}/settings_path.c)
+  target_include_directories(mga2_outline_config_tests PRIVATE "${RT}")
+  target_compile_definitions(mga2_outline_config_tests PRIVATE
+    _CRT_SECURE_NO_WARNINGS)
+  target_compile_options(mga2_outline_config_tests PRIVATE ${MGA2_FP_FLAGS})
+  add_test(NAME mga2_outline_config COMMAND mga2_outline_config_tests)
+
+  add_executable(mga2_outline_policy_tests EXCLUDE_FROM_ALL
+    tools/mga2/tests/outline_policy_test.c
+    tools/mga2/outline_policy.c)
+  target_include_directories(mga2_outline_policy_tests PRIVATE
+    "${RT}" "${CMAKE_SOURCE_DIR}/tools/mga2")
+  target_compile_options(mga2_outline_policy_tests PRIVATE ${MGA2_FP_FLAGS})
+  add_test(NAME mga2_outline_policy COMMAND mga2_outline_policy_tests)
+
+  if(WIN32)
+    add_executable(mga2_outline_software_ui_host EXCLUDE_FROM_ALL
+      tools/mga2/tests/outline_software_ui_host.c
+      ${RT}/graphics_settings.c
+      ${RT}/graphics_config.c
+      ${RT}/settings_path.c)
+    target_include_directories(mga2_outline_software_ui_host PRIVATE "${RT}")
+    target_compile_definitions(mga2_outline_software_ui_host PRIVATE
+      _CRT_SECURE_NO_WARNINGS SR_SKIP_STARTUP_PRESENT=4000u)
+    target_compile_options(mga2_outline_software_ui_host PRIVATE ${MGA2_FP_FLAGS})
+    target_link_libraries(mga2_outline_software_ui_host PRIVATE user32 gdi32)
+  endif()
+
   if(MGA2_ENABLE_D3D12 OR MGA2_ENABLE_VULKAN)
     add_executable(mga2_texture_scaler_tests EXCLUDE_FROM_ALL
-      ${PSP_RECOMP_DIR}/tools/tests/texture_scaler_test.cpp
+      ${MGA2_RUNTIME_TESTS}/texture_scaler_test.cpp
       ${RT}/texture_scaler.cpp
       ${PSP_RECOMP_DIR}/third_party/xbrz/xbrz.cpp)
     target_include_directories(mga2_texture_scaler_tests PRIVATE "${RT}")
@@ -369,7 +426,7 @@ if(BUILD_TESTING)
 
   if(MGA2_ENABLE_D3D12)
     add_executable(mga2_d3d12_vertex_tests EXCLUDE_FROM_ALL
-      ${PSP_RECOMP_DIR}/tools/tests/d3d12_vertex_test.cpp
+      ${MGA2_RUNTIME_TESTS}/d3d12_vertex_test.cpp
       ${RT}/gpu_d3d12/vertex.cpp
       ${RT}/gpu_d3d12/framebuffer_key.cpp
       ${RT}/gpu_d3d12/pipeline_key.cpp
@@ -387,9 +444,11 @@ if(BUILD_TESTING)
   if(MGA2_ENABLE_VULKAN)
     find_package(Python3 REQUIRED COMPONENTS Interpreter)
     add_executable(mga2_vulkan_shader_state_tests EXCLUDE_FROM_ALL
-      ${PSP_RECOMP_DIR}/tools/tests/vulkan_shader_state_test.c
+      ${MGA2_RUNTIME_TESTS}/vulkan_shader_state_test.c
+      tools/mga2/outline_policy.c
       ${RT}/gpu_sdl3vk/shader_state.c)
-    target_include_directories(mga2_vulkan_shader_state_tests PRIVATE "${RT}")
+    target_include_directories(mga2_vulkan_shader_state_tests PRIVATE
+      "${RT}" "${CMAKE_SOURCE_DIR}/tools/mga2")
     target_compile_options(mga2_vulkan_shader_state_tests PRIVATE
       ${MGA2_FP_FLAGS})
     add_test(NAME mga2_vulkan_shader_state
@@ -400,4 +459,13 @@ if(BUILD_TESTING)
     set_tests_properties(mga2_vulkan_validator PROPERTIES
       WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
   endif()
+  foreach(test_target IN ITEMS
+      mga2_display_state_tests mga2_perf_stats_tests mga2_ge_patch_math_tests
+      mga2_graphics_config_tests mga2_outline_config_tests mga2_outline_policy_tests
+      mga2_outline_software_ui_host
+      mga2_texture_scaler_tests mga2_d3d12_vertex_tests mga2_vulkan_shader_state_tests)
+    if(TARGET ${test_target})
+      add_dependencies(${test_target} mga2_verify_toolkit)
+    endif()
+  endforeach()
 endif()

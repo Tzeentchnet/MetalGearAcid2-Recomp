@@ -1,0 +1,1283 @@
+diff --git a/src/rt/ge.c b/src/rt/ge.c
+index cbc7b77..ae08cb2 100644
+--- a/src/rt/ge.c
++++ b/src/rt/ge.c
+@@ -22,6 +22,8 @@
+ #include "recomp.h"
+ #include "ge_patch_math.h"
+ #include "ge_shared.h"
++#include "graphics_config.h"
++#include "outline_policy.h"
+ #include "perf_stats.h"
+ 
+ #include <errno.h>
+@@ -3115,7 +3117,19 @@ static void fill_rect_clear_fast(int xa, int ya, int xb, int yb, int r, int g, i
+ /* Rasterise a sprite (axis-aligned rect from two corner vertices). Used by both modes;
+  * persp=1 recovers UV from the over-w storage and depth-tests with the second vertex's z. */
+ static void fill_sprite(const Vtx *p0, const Vtx *p1, int persp) {
+-    if (s_backend && s_backend->sprite && s_backend->sprite(p0, p1, persp)) return;
++    const SrGraphicsConfig *graphics = sr_graphics_config_get();
++    int outline = graphics &&
++        graphics->outlines != SR_GRAPHICS_OUTLINES_ORIGINAL &&
++        sr_mga2_outline_sprite(&ge, p0, p1, persp);
++    if (outline && graphics->outlines == SR_GRAPHICS_OUTLINES_OFF)
++        return;
++    ge.mga2_sharper_outline =
++        outline && graphics->outlines == SR_GRAPHICS_OUTLINES_SHARPER;
++    if (s_backend && s_backend->sprite && s_backend->sprite(p0, p1, persp)) {
++        ge.mga2_sharper_outline = 0;
++        return;
++    }
++    ge.mga2_sharper_outline = 0;
+     texel_cache_begin();
+ 
+     int xa=(int)fminf(p0->x,p1->x), xb=(int)fmaxf(p0->x,p1->x);
+diff --git a/src/rt/ge_shared.h b/src/rt/ge_shared.h
+index 3cca7c0..10d1cde 100644
+--- a/src/rt/ge_shared.h
++++ b/src/rt/ge_shared.h
+@@ -95,6 +95,7 @@ typedef struct {
+     /* Immediate vertex state, GE 0xF0-0xF9 (VSCX..VSCV). VAP (index 7) submits a vertex;
+      * the current runtime records state and reports nonzero VAP drawing explicitly. */
+     uint32_t imm[10];
++    int mga2_sharper_outline;
+ } GeState;
+ 
+ /* A rasterized vertex: screen position, reciprocal clip-w (for persp-correct interp), UV,
+diff --git a/src/rt/gpu_d3d12/shader_state.cpp b/src/rt/gpu_d3d12/shader_state.cpp
+index 1c2cb8c..6c60064 100644
+--- a/src/rt/gpu_d3d12/shader_state.cpp
++++ b/src/rt/gpu_d3d12/shader_state.cpp
+@@ -253,6 +253,8 @@ void ged3d12_shader_constants_build(
+              GE_D3D12_TEXTURE_FRAMEBUFFER_FORMAT_MASK)
+             << (GE_D3D12_SHADER_FRAMEBUFFER_FORMAT_SHIFT -
+                 GE_D3D12_TEXTURE_FRAMEBUFFER_FORMAT_SHIFT);
++        if (state->mga2_sharper_outline)
++            clut_state |= GE_D3D12_SHADER_SHARPER_FEEDBACK;
+     }
+     out->color_test[3] =
+         clut_state |
+diff --git a/src/rt/gpu_d3d12/shader_state.h b/src/rt/gpu_d3d12/shader_state.h
+index f5cee25..c1c6fef 100644
+--- a/src/rt/gpu_d3d12/shader_state.h
++++ b/src/rt/gpu_d3d12/shader_state.h
+@@ -12,6 +12,7 @@
+ #define GE_D3D12_SHADER_FRAMEBUFFER_FORMAT_SHIFT 28u
+ #define GE_D3D12_SHADER_FRAMEBUFFER_FORMAT_MASK \
+     (3u << GE_D3D12_SHADER_FRAMEBUFFER_FORMAT_SHIFT)
++#define GE_D3D12_SHADER_SHARPER_FEEDBACK (1u << 27)
+ 
+ enum GeD3D12ShaderFlag : uint32_t {
+     GE_D3D12_SHADER_TEXTURE = 1u,
+diff --git a/src/rt/gpu_d3d12/shaders/psp_ps.hlsl b/src/rt/gpu_d3d12/shaders/psp_ps.hlsl
+index f3816a6..76daa76 100644
+--- a/src/rt/gpu_d3d12/shaders/psp_ps.hlsl
++++ b/src/rt/gpu_d3d12/shaders/psp_ps.hlsl
+@@ -170,13 +170,18 @@ float4 feedback_texel(int2 coordinate) {
+     int2 dimensions = max((int2)texsize.xy, int2(1, 1));
+     int render_scale = max((int)(texenv.w + 0.5), 1);
+     uint clut_format = (uint)color_test_state.w;
++    bool sharper = (clut_format & (1u << 27)) != 0;
++    if (sharper) dimensions *= render_scale;
+     coordinate.x = feedback_coordinate(
+         coordinate.x, dimensions.x, (clut_format & (1u << 30)) != 0);
+     coordinate.y = feedback_coordinate(
+         coordinate.y, dimensions.y, (clut_format & (1u << 31)) != 0);
+-    coordinate += (int2)texsize.zw;
+-    coordinate =
+-        coordinate * render_scale + render_scale / 2;
++    if (sharper) {
++        coordinate += (int2)texsize.zw * render_scale;
++    } else {
++        coordinate += (int2)texsize.zw;
++        coordinate = coordinate * render_scale + render_scale / 2;
++    }
+ 
+     float4 source = psp_texture.Load(int3(coordinate, 0));
+     uint4 bytes = (uint4)(source * 255.0 + 0.5);
+@@ -201,6 +206,8 @@ float4 feedback_texel(int2 coordinate) {
+ }
+ 
+ float4 sample_feedback(float2 uv, bool nearest, bool psp_sampler) {
++    if (((uint)color_test_state.w & (1u << 27)) != 0)
++        uv *= max((int)(texenv.w + 0.5), 1);
+     if (nearest) return feedback_texel((int2)floor(uv));
+     float2 position = uv - 0.5;
+     int2 base = (int2)floor(position);
+@@ -401,7 +408,9 @@ int4 shade_source(
+             float4 texture_color =
+                 (flags & 16384) != 0
+                     ? sample_feedback(
+-                          shifted_uv, nearest, quantized_sampler)
++                          ((uint)color_test_state.w & (1u << 27)) != 0
++                              ? uv : shifted_uv,
++                          nearest, quantized_sampler)
+                     : quantized_sampler
+                         ? sample_texture_psp(
+                               uv, nearest, framebuffer_texture)
+diff --git a/src/rt/gpu_d3d12/vertex.cpp b/src/rt/gpu_d3d12/vertex.cpp
+index 22e5b1a..3e2f5de 100644
+--- a/src/rt/gpu_d3d12/vertex.cpp
++++ b/src/rt/gpu_d3d12/vertex.cpp
+@@ -152,7 +152,10 @@ static bool begin_primitive_ex(
+             last->list_addr == debug.list_addr &&
+             last->draw_serial == debug.draw_serial &&
+             last->draw_pc == debug.draw_pc &&
+-            last->draw_op == debug.draw_op) {
++            last->draw_op == debug.draw_op &&
++            ((last->shader.color_test[3] &
++              GE_D3D12_SHADER_SHARPER_FEEDBACK) != 0) ==
++                (ge_state_ptr()->mga2_sharper_outline != 0)) {
+             last->count += vertex_count;
+             s_primitive_count[primitive]++;
+             return true;
+diff --git a/src/rt/gpu_sdl3vk/ge_gpu.c b/src/rt/gpu_sdl3vk/ge_gpu.c
+index 6b119b9..e23780b 100644
+--- a/src/rt/gpu_sdl3vk/ge_gpu.c
++++ b/src/rt/gpu_sdl3vk/ge_gpu.c
+@@ -62,6 +62,7 @@
+ #define MAX_TEX    1024
+ #define MAX_TGT    8
+ #define MAX_DEP    4
++#define MAX_CAPTURE_REQUESTS 8
+ 
+ static const uint32_t k_vert_spv[] =
+ #include "psp_vert.inc"
+@@ -129,6 +130,7 @@ typedef struct {
+ 
+ /* ---- backend state -------------------------------------------------------------------- */
+ static int s_ready = 0;
++static int s_failed = 0;
+ static GeState  *s_ge;
+ static uint16_t *s_zbuf;
+ 
+@@ -145,12 +147,19 @@ static VkBuffer s_vbuf, s_xfer;            /* vertices; pixel transfer staging (
+ static VkDeviceMemory s_vbuf_m, s_xfer_m;
+ static GpuVert *s_vmap;
+ static void    *s_xfer_map;
++static VkBuffer s_clut_buffer;
++static VkDeviceMemory s_clut_memory;
++static void *s_clut_map;
++static int s_clut_valid;
+ 
+ static VkDescriptorSetLayout s_dlayout;
+ static VkDescriptorSetLayout s_dst_dlayout;
++static VkDescriptorSetLayout s_clut_dlayout;
+ static VkDescriptorPool s_dpool_tex, s_dpool_fix;
++static VkDescriptorPool s_dpool_clut;
+ static VkPipelineLayout s_playout;
+ static VkShaderModule s_vs, s_fs;
++static VkDescriptorSet s_clut_set;
+ 
+ static TexEnt  s_tex[MAX_TEX];
+ static int     s_tex_n = 0;
+@@ -194,6 +203,8 @@ static uint32_t s_texscratch[512 * 512];
+ static uint32_t *s_texscaled;
+ static uint32_t s_texture_scale = 1u;
+ static uint32_t s_render_scale = 1u;
++static char s_capture_paths[MAX_CAPTURE_REQUESTS][1024];
++static uint32_t s_capture_count;
+ static uint32_t s_pxscratch[FB_W * FB_TEX_H];
+ static uint32_t s_scaled_color_row[FB_W * SR_GRAPHICS_SCALE_MAX];
+ static uint16_t s_scaled_depth_row[FB_W * SR_GRAPHICS_SCALE_MAX];
+@@ -559,6 +570,9 @@ static int submit_pending(void) {
+     vkCmdBindDescriptorSets(
+         s_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, s_playout,
+         1, 1, &s_dst_set, 0, NULL);
++    vkCmdBindDescriptorSets(
++        s_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, s_playout,
++        2, 1, &s_clut_set, 0, NULL);
+ 
+     VkPipeline cur = VK_NULL_HANDLE;
+     for (uint32_t i = 0; i < s_nbatch; i++) {
+@@ -1102,6 +1116,38 @@ static int map_factor(
+     }
+ }
+ 
++static int upload_feedback_clut(void) {
++    if (s_clut_valid &&
++        memcmp(s_clut_map, s_ge->clutram, sizeof(s_ge->clutram)) == 0)
++        return 1;
++    if (s_nbatch && !submit_pending()) {
++        fprintf(stderr, "gegpu: cannot submit before updating feedback CLUT\n");
++        return 0;
++    }
++    memcpy(s_clut_map, s_ge->clutram, sizeof(s_ge->clutram));
++    s_clut_valid = 1;
++    return 1;
++}
++
++static void set_direct_pipeline(PipeKey *key, const GeState *state) {
++    static const uint8_t zmap[8] = {
++        VK_COMPARE_OP_NEVER, VK_COMPARE_OP_ALWAYS,
++        VK_COMPARE_OP_EQUAL, VK_COMPARE_OP_NOT_EQUAL,
++        VK_COMPARE_OP_LESS, VK_COMPARE_OP_LESS_OR_EQUAL,
++        VK_COMPARE_OP_GREATER, VK_COMPARE_OP_GREATER_OR_EQUAL,
++    };
++    key->manual = 0;
++    key->cmask = VK_COLOR_COMPONENT_R_BIT |
++                 VK_COLOR_COMPONENT_G_BIT |
++                 VK_COLOR_COMPONENT_B_BIT;
++    if (ge_vk_shader_direct_stencil_write(state))
++        key->cmask |= VK_COLOR_COMPONENT_A_BIT;
++    key->ztest = state->ztest_enable ? 1 : 0;
++    key->zwrite = (key->ztest && !state->zwrite_disable) ? 1 : 0;
++    key->zfunc = key->ztest
++        ? zmap[state->ztest & 7] : VK_COMPARE_OP_ALWAYS;
++}
++
+ static void build_state(int persp, int sprite, Batch *b) {
+     GeState *g = s_ge;
+     PipeKey *k = &b->key;
+@@ -1133,21 +1179,7 @@ static void build_state(int persp, int sprite, Batch *b) {
+         k->zwrite = 1;
+         k->zfunc = VK_COMPARE_OP_ALWAYS;
+     } else {
+-        k->cmask = VK_COLOR_COMPONENT_R_BIT |
+-                   VK_COLOR_COMPONENT_G_BIT |
+-                   VK_COLOR_COMPONENT_B_BIT;
+-        if (ge_vk_shader_direct_stencil_write(g))
+-            k->cmask |= VK_COLOR_COMPONENT_A_BIT;
+-        k->ztest = g->ztest_enable ? 1 : 0;
+-        k->zwrite = (k->ztest && !g->zwrite_disable) ? 1 : 0;
+-        static const uint8_t zmap[8] = {
+-            VK_COMPARE_OP_NEVER, VK_COMPARE_OP_ALWAYS,
+-            VK_COMPARE_OP_EQUAL, VK_COMPARE_OP_NOT_EQUAL,
+-            VK_COMPARE_OP_LESS, VK_COMPARE_OP_LESS_OR_EQUAL,
+-            VK_COMPARE_OP_GREATER, VK_COMPARE_OP_GREATER_OR_EQUAL,
+-        };
+-        k->zfunc = k->ztest
+-            ? zmap[g->ztest & 7] : VK_COMPARE_OP_ALWAYS;
++        set_direct_pipeline(k, g);
+     }
+ 
+     b->bconst[3] = 1.0f;
+@@ -1210,39 +1242,65 @@ static void build_state(int persp, int sprite, Batch *b) {
+             int linear = (g->tex_filter & 1) || ((g->tex_filter >> 8) & 1);
+             uint32_t bpp_s = src->fmt == 3 ? 4 : 2;
+             uint32_t toff = (g->tex_addr & 0x001FFFFFu) - src->fba;
++            int indexed_feedback =
++                g->mga2_sharper_outline && s_render_scale > 1u &&
++                src == s_cur &&
++                g->tex_fmt == 6u && src->fmt == 1u &&
++                toff == 0u && g->tex_w == 512 && g->tex_h == 512 &&
++                !(g->tex_filter & 4u && g->tex_max_level > 0);
+             s_cnt_rtt++;
+             /* GPU-direct: bind the target image, addressing any pixel-aligned sub-rect
+              * through the texel offset in texsize.zw — no readback, no CPU decode.
+              * tex_fmt must EQUAL the target's psm: reinterpreting one 16-bit format as
+              * another scrambles channels/alpha and must go through VRAM pack/unpack.
+              * SR_GPU_NORTT=1 forces the readback path for all draws (debug bisect). */
+-            if (!nortt && g->tex_fmt == src->fmt && !g->tex_swizzle &&
++            if (!nortt && (g->tex_fmt == src->fmt || indexed_feedback) &&
++                !g->tex_swizzle &&
+                 (g->tex_bufw == src->stride || g->tex_bufw == 0) && (toff % bpp_s) == 0) {
+                 uint32_t pix = toff / bpp_s;
++                if (indexed_feedback && !upload_feedback_clut()) {
++                    s_failed = 1;
++                    b->sw = 0;
++                    return;
++                }
+                 if (src == s_cur) {
+                     /* feedback loop: sample a snapshot copy; reuse the previous snapshot
+                      * while nothing new has rendered into the target */
+-                    if (s_nbatch) submit_pending();
++                    if (s_nbatch && !submit_pending()) {
++                        fprintf(stderr, "gegpu: feedback draw submission failed\n");
++                        s_failed = 1;
++                        b->sw = 0;
++                        return;
++                    }
+                     if (s_snap_src != src || s_snap_srcgen != src->render_gen) {
+-                        if (cmd_begin()) {
+-                            to_layout(s_cmd, src->img, VK_IMAGE_ASPECT_COLOR_BIT, &src->layout,
+-                                      VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+-                            to_layout(s_cmd, s_snapimg, VK_IMAGE_ASPECT_COLOR_BIT, &s_snap_layout,
+-                                      VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+-                            VkImageCopy ic = {0};
+-                            ic.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+-                            ic.srcSubresource.layerCount = 1;
+-                            ic.dstSubresource = ic.srcSubresource;
+-                            ic.extent.width = render_width();
+-                            ic.extent.height = texture_height();
+-                            ic.extent.depth = 1;
+-                            vkCmdCopyImage(s_cmd, src->img, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+-                                           s_snapimg, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &ic);
+-                            to_layout(s_cmd, s_snapimg, VK_IMAGE_ASPECT_COLOR_BIT, &s_snap_layout,
+-                                      VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+-                            to_layout(s_cmd, src->img, VK_IMAGE_ASPECT_COLOR_BIT, &src->layout,
+-                                      VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+-                            cmd_submit_wait();
++                        VkImageCopy ic = {0};
++                        if (!cmd_begin()) {
++                            fprintf(stderr, "gegpu: cannot begin feedback snapshot\n");
++                            s_failed = 1;
++                            b->sw = 0;
++                            return;
++                        }
++                        to_layout(s_cmd, src->img, VK_IMAGE_ASPECT_COLOR_BIT, &src->layout,
++                                  VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
++                        to_layout(s_cmd, s_snapimg, VK_IMAGE_ASPECT_COLOR_BIT, &s_snap_layout,
++                                  VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
++                        ic.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
++                        ic.srcSubresource.layerCount = 1;
++                        ic.dstSubresource = ic.srcSubresource;
++                        ic.extent.width = render_width();
++                        ic.extent.height = texture_height();
++                        ic.extent.depth = 1;
++                        vkCmdCopyImage(s_cmd, src->img, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
++                                       s_snapimg, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &ic);
++                        to_layout(s_cmd, s_snapimg, VK_IMAGE_ASPECT_COLOR_BIT, &s_snap_layout,
++                                  VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
++                        to_layout(s_cmd, src->img, VK_IMAGE_ASPECT_COLOR_BIT, &src->layout,
++                                  VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
++                        if (!cmd_submit_wait()) {
++                            fprintf(stderr, "gegpu: feedback snapshot submission failed\n");
++                            s_failed = 1;
++                            b->sw = 0;
++                            return;
+                         }
+                         s_snap_src = src;
+                         s_snap_srcgen = src->render_gen;
+@@ -1268,6 +1326,17 @@ static void build_state(int persp, int sprite, Batch *b) {
+                     (pix % src->stride) |
+                     ((pix / src->stride) << 16);
+                 flags |= GE_VK_SHADER_FRAMEBUFFER;
++                if (indexed_feedback) {
++                    b->pc.color_test[3] |= (src->fmt & 3u) << 28;
++                    flags |= GE_VK_SHADER_SHARPER_FEEDBACK |
++                             GE_VK_SHADER_PSP_SAMPLER;
++                    if (ge_vk_shader_outline_direct_compatible(
++                            g, s_render_scale)) {
++                        flags |= GE_VK_SHADER_DIRECT |
++                                 GE_VK_SHADER_OUTLINE_DIRECT;
++                        set_direct_pipeline(k, g);
++                    }
++                }
+             } else {
+                 /* incompatible stride/format reinterpretation: VRAM + decoder (rare) */
+                 target_readback(src);
+@@ -1300,7 +1369,7 @@ typedef struct {
+     int logic_op_enable; uint32_t logic_op;
+     int dither_enable; int8_t dith[4][4];
+     int fog_enable; uint32_t fog_color;
+-    int persp, sprite;
++    int persp, sprite, sharper_outline;
+     uint32_t flushgen;
+ } StateSnap;
+ static StateSnap s_snapst;
+@@ -1338,6 +1407,7 @@ static void snap_fill(StateSnap *o, int persp, int sprite) {
+     memcpy(o->dith, g->dith, sizeof(o->dith));
+     o->fog_enable = g->fog_enable; o->fog_color = g->fog_color;
+     o->persp = persp; o->sprite = sprite;
++    o->sharper_outline = g->mga2_sharper_outline;
+     o->flushgen = s_flushgen;
+ }
+ 
+@@ -1647,18 +1717,98 @@ void gegpu_flush(const char *reason) {
+     submit_pending();
+ }
+ 
++int gegpu_capture_next(const char *path) {
++    size_t length;
++    if (!s_ready || !path || !(length = strlen(path)) ||
++        length >= sizeof(s_capture_paths[0]) ||
++        s_capture_count >= MAX_CAPTURE_REQUESTS) {
++        fprintf(stderr, "gegpu: cannot queue internal-resolution capture\n");
++        return 0;
++    }
++    memcpy(s_capture_paths[s_capture_count++], path, length + 1u);
++    return 1;
++}
++
++static int capture_target(Target *target) {
++    VkBufferImageCopy copy = {0};
++    uint8_t row[DRAW_W * SR_GRAPHICS_SCALE_MAX * 3u];
++    uint32_t width = DRAW_W * s_render_scale;
++    uint32_t height = FB_H * s_render_scale;
++    if (!s_capture_count) return 1;
++    if (!cmd_begin()) return 0;
++    to_layout(s_cmd, target->img, VK_IMAGE_ASPECT_COLOR_BIT, &target->layout,
++              VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
++    copy.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
++    copy.imageSubresource.layerCount = 1;
++    copy.imageExtent.width = render_width();
++    copy.imageExtent.height = height;
++    copy.imageExtent.depth = 1;
++    vkCmdCopyImageToBuffer(
++        s_cmd, target->img, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
++        s_xfer, 1, &copy);
++    {
++        VkBufferMemoryBarrier barrier = {
++            VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER
++        };
++        barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
++        barrier.dstAccessMask = VK_ACCESS_HOST_READ_BIT;
++        barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
++        barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
++        barrier.buffer = s_xfer;
++        barrier.size = VK_WHOLE_SIZE;
++        vkCmdPipelineBarrier(
++            s_cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT,
++            0, 0, NULL, 1, &barrier, 0, NULL);
++    }
++    if (!cmd_submit_wait()) return 0;
++    for (uint32_t capture = 0; capture < s_capture_count; capture++) {
++        const char *path = s_capture_paths[capture];
++        FILE *file = fopen(path, "wb");
++        int ok = file != NULL;
++        if (ok) ok = fprintf(file, "P6\n%u %u\n255\n", width, height) > 0;
++        for (uint32_t y = 0; ok && y < height; y++) {
++            const uint8_t *source =
++                (const uint8_t *)s_xfer_map + (size_t)y * render_width() * 4u;
++            for (uint32_t x = 0; x < width; x++) {
++                row[x * 3u] = source[x * 4u];
++                row[x * 3u + 1u] = source[x * 4u + 1u];
++                row[x * 3u + 2u] = source[x * 4u + 2u];
++            }
++            ok = fwrite(row, 3u, width, file) == width;
++        }
++        if (file && fclose(file) != 0) ok = 0;
++        if (!ok) {
++            fprintf(stderr, "gegpu: failed to write capture %s\n", path);
++            s_capture_count = 0;
++            return 0;
++        }
++        fprintf(stderr, "gegpu: captured internal framebuffer -> %s\n", path);
++    }
++    s_capture_count = 0;
++    return 1;
++}
++
+ /* Present: hand the GPU image straight to the swapchain. Returns 0 if this address is
+  * not GPU-resident (CPU-written movie frames, pre-GPU content) — caller uses the
+  * guest-VRAM path. */
+ int gegpu_present(uint32_t fbaddr, int fmt, uint32_t stride) {
+     (void)stride;
+     if (!s_ready) return -1;
++    if (s_failed) return -2;
+     uint32_t fba = fbaddr & 0x001FFFFFu;
+     Target *t = NULL;
+     for (int i = 0; i < MAX_TGT; i++)
+         if (s_tgts[i].used && s_tgts[i].fba == fba) { t = &s_tgts[i]; break; }
+-    if (!t || !t->gpu_valid || (int)t->fmt != (fmt & 3)) { s_cnt_present_cpu++; return -1; }
+-    if (t == s_cur && s_nbatch) submit_pending();
++    if (!t || !t->gpu_valid || (int)t->fmt != (fmt & 3)) {
++        if (s_capture_count) {
++            fprintf(stderr, "gegpu: internal capture has no GPU framebuffer\n");
++            s_capture_count = 0;
++        }
++        s_cnt_present_cpu++;
++        return -1;
++    }
++    if (t == s_cur && s_nbatch && !submit_pending()) return -2;
++    if (!capture_target(t)) return -2;
+ 
+     static int safe = -1;
+     if (safe < 0) { const char *sv = getenv("SR_GPU_SAFE"); safe = (sv && sv[0] && strcmp(sv, "0") != 0) ? 1 : 0; }
+@@ -1699,6 +1849,7 @@ static int gegpu_init(void) {
+     s_queue = (VkQueue)vi.queue;
+     s_ge    = ge_state_ptr();
+     s_zbuf  = ge_zbuf_ptr();
++    s_failed = 0;
+     {
+         const char *lg = getenv("SR_GPU_LOG");
+         s_log = (lg && lg[0] && strcmp(lg, "0") != 0) ? 1 : 0;
+@@ -1772,6 +1923,10 @@ static int gegpu_init(void) {
+ 
+     if (!make_buffer(MAX_VERTS * sizeof(GpuVert), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                      &s_vbuf, &s_vbuf_m, (void **)&s_vmap)) return 0;
++    if (!make_buffer(
++            sizeof(s_ge->clutram), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
++            &s_clut_buffer, &s_clut_memory, &s_clut_map)) return 0;
++    s_clut_valid = 0;
+     {
+         uint32_t transfer_scale =
+             s_render_scale > s_texture_scale
+@@ -1796,6 +1951,15 @@ static int gegpu_init(void) {
+     dlc.pBindings = dst_bindings;
+     VKC(vkCreateDescriptorSetLayout(
+         s_dev, &dlc, NULL, &s_dst_dlayout));
++    VkDescriptorSetLayoutBinding clut_binding = {0};
++    clut_binding.binding = 0;
++    clut_binding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
++    clut_binding.descriptorCount = 1;
++    clut_binding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
++    dlc.bindingCount = 1;
++    dlc.pBindings = &clut_binding;
++    VKC(vkCreateDescriptorSetLayout(
++        s_dev, &dlc, NULL, &s_clut_dlayout));
+ 
+     VkDescriptorPoolSize dps = { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, MAX_TEX };
+     VkDescriptorPoolCreateInfo dpc = { VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
+@@ -1809,13 +1973,40 @@ static int gegpu_init(void) {
+     dpc.maxSets = 2 * MAX_TGT + 4; dpc.pPoolSizes = &dpsf;
+     dpc.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
+     VKC(vkCreateDescriptorPool(s_dev, &dpc, NULL, &s_dpool_fix));
++    VkDescriptorPoolSize clut_pool_size = {
++        VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1
++    };
++    dpc.maxSets = 1;
++    dpc.pPoolSizes = &clut_pool_size;
++    VKC(vkCreateDescriptorPool(s_dev, &dpc, NULL, &s_dpool_clut));
++    {
++        VkDescriptorSetAllocateInfo alloc = {
++            VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO
++        };
++        VkDescriptorBufferInfo buffer = {
++            s_clut_buffer, 0, sizeof(s_ge->clutram)
++        };
++        VkWriteDescriptorSet write = {
++            VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET
++        };
++        alloc.descriptorPool = s_dpool_clut;
++        alloc.descriptorSetCount = 1;
++        alloc.pSetLayouts = &s_clut_dlayout;
++        VKC(vkAllocateDescriptorSets(s_dev, &alloc, &s_clut_set));
++        write.dstSet = s_clut_set;
++        write.dstBinding = 0;
++        write.descriptorCount = 1;
++        write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
++        write.pBufferInfo = &buffer;
++        vkUpdateDescriptorSets(s_dev, 1, &write, 0, NULL);
++    }
+ 
+     VkPushConstantRange pcr = { VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(PushPC) };
+     VkPipelineLayoutCreateInfo plc = { VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO };
+-    VkDescriptorSetLayout set_layouts[2] = {
+-        s_dlayout, s_dst_dlayout
++    VkDescriptorSetLayout set_layouts[3] = {
++        s_dlayout, s_dst_dlayout, s_clut_dlayout
+     };
+-    plc.setLayoutCount = 2; plc.pSetLayouts = set_layouts;
++    plc.setLayoutCount = 3; plc.pSetLayouts = set_layouts;
+     plc.pushConstantRangeCount = 1; plc.pPushConstantRanges = &pcr;
+     VKC(vkCreatePipelineLayout(s_dev, &plc, NULL, &s_playout));
+ 
+@@ -1899,11 +2090,13 @@ static int gegpu_init(void) {
+ }
+ 
+ static void gegpu_shutdown(void) {
+-    if (!s_ready) return;
+-    submit_pending();
+-    s_ready = 0;
+-    sr_gpu_vram_watch_reads(0);
+-    sr_gpu_vram_watch_writes(0);
++    if (!s_dev) return;
++    if (s_ready) {
++        if (!s_failed) submit_pending();
++        s_ready = 0;
++        sr_gpu_vram_watch_reads(0);
++        sr_gpu_vram_watch_writes(0);
++    }
+     vkDeviceWaitIdle(s_dev);
+ 
+     for (int i = 0; i < MAX_TGT; i++)
+@@ -1947,6 +2140,8 @@ static void gegpu_shutdown(void) {
+         vkDestroyDescriptorPool(s_dev, s_dpool_tex, NULL);
+     if (s_dpool_fix)
+         vkDestroyDescriptorPool(s_dev, s_dpool_fix, NULL);
++    if (s_dpool_clut)
++        vkDestroyDescriptorPool(s_dev, s_dpool_clut, NULL);
+ 
+     if (s_white_smp)
+         vkDestroySampler(s_dev, s_white_smp, NULL);
+@@ -1983,20 +2178,28 @@ static void gegpu_shutdown(void) {
+         vkDestroyDescriptorSetLayout(s_dev, s_dlayout, NULL);
+     if (s_dst_dlayout)
+         vkDestroyDescriptorSetLayout(s_dev, s_dst_dlayout, NULL);
++    if (s_clut_dlayout)
++        vkDestroyDescriptorSetLayout(s_dev, s_clut_dlayout, NULL);
+     if (s_rp)
+         vkDestroyRenderPass(s_dev, s_rp, NULL);
+     if (s_vmap)
+         vkUnmapMemory(s_dev, s_vbuf_m);
+     if (s_xfer_map)
+         vkUnmapMemory(s_dev, s_xfer_m);
++    if (s_clut_map)
++        vkUnmapMemory(s_dev, s_clut_memory);
+     if (s_vbuf)
+         vkDestroyBuffer(s_dev, s_vbuf, NULL);
+     if (s_xfer)
+         vkDestroyBuffer(s_dev, s_xfer, NULL);
++    if (s_clut_buffer)
++        vkDestroyBuffer(s_dev, s_clut_buffer, NULL);
+     if (s_vbuf_m)
+         vkFreeMemory(s_dev, s_vbuf_m, NULL);
+     if (s_xfer_m)
+         vkFreeMemory(s_dev, s_xfer_m, NULL);
++    if (s_clut_memory)
++        vkFreeMemory(s_dev, s_clut_memory, NULL);
+     if (s_fence)
+         vkDestroyFence(s_dev, s_fence, NULL);
+     if (s_pool)
+@@ -2004,6 +2207,34 @@ static void gegpu_shutdown(void) {
+ 
+     free(s_texscaled);
+     s_texscaled = NULL;
++    s_pdev = VK_NULL_HANDLE;
++    s_dev = VK_NULL_HANDLE;
++    s_queue = VK_NULL_HANDLE;
++    s_pool = VK_NULL_HANDLE;
++    s_cmd = VK_NULL_HANDLE;
++    s_fence = VK_NULL_HANDLE;
++    s_rp = VK_NULL_HANDLE;
++    s_vbuf = s_xfer = s_clut_buffer = VK_NULL_HANDLE;
++    s_vbuf_m = s_xfer_m = s_clut_memory = VK_NULL_HANDLE;
++    s_vmap = NULL;
++    s_xfer_map = NULL;
++    s_clut_map = NULL;
++    s_clut_valid = 0;
++    s_dlayout = s_dst_dlayout = s_clut_dlayout = VK_NULL_HANDLE;
++    s_dpool_tex = s_dpool_fix = s_dpool_clut = VK_NULL_HANDLE;
++    s_playout = VK_NULL_HANDLE;
++    s_vs = s_fs = VK_NULL_HANDLE;
++    s_clut_set = s_white_set = s_snap_n = s_snap_l = s_dst_set = VK_NULL_HANDLE;
++    s_white = s_snapimg = s_dst_color = s_dst_depth = VK_NULL_HANDLE;
++    s_white_mem = s_snapimg_mem = s_dst_color_mem = s_dst_depth_mem = VK_NULL_HANDLE;
++    s_white_view = s_snap_view = s_dst_color_view = s_dst_depth_view = VK_NULL_HANDLE;
++    s_white_smp = s_smp_n = s_smp_l = VK_NULL_HANDLE;
++    s_snap_src = NULL;
++    s_snap_srcgen = 0;
++    s_nbatch = s_nverts = 0;
++    s_tmpl_ok = 0;
++    s_failed = 0;
+     s_render_scale = 1u;
+     s_texture_scale = 1u;
++    s_capture_count = 0;
+ }
+diff --git a/src/rt/gpu_sdl3vk/ge_gpu.h b/src/rt/gpu_sdl3vk/ge_gpu.h
+index 5c5fa16..54408a6 100644
+--- a/src/rt/gpu_sdl3vk/ge_gpu.h
++++ b/src/rt/gpu_sdl3vk/ge_gpu.h
+@@ -10,6 +10,7 @@ extern "C" {
+ 
+ /* The SDL3/Vulkan presenter must be initialized before backend->init(). */
+ const GeBackend *gegpu_backend(void);
++int gegpu_capture_next(const char *path);
+ 
+ #ifdef __cplusplus
+ }
+diff --git a/src/rt/gpu_sdl3vk/shader_state.c b/src/rt/gpu_sdl3vk/shader_state.c
+index e6b81a9..d6f23d2 100644
+--- a/src/rt/gpu_sdl3vk/shader_state.c
++++ b/src/rt/gpu_sdl3vk/shader_state.c
+@@ -1,4 +1,5 @@
+ #include "shader_state.h"
++#include "outline_policy.h"
+ 
+ #include <string.h>
+ 
+@@ -85,6 +86,15 @@ int ge_vk_shader_direct_stencil_write(const GeState *state) {
+            writes_stencil;
+ }
+ 
++int ge_vk_shader_outline_direct_compatible(
++    const GeState *state, uint32_t render_scale) {
++    return state && state->mga2_sharper_outline &&
++           render_scale > 1u && render_scale <= 8u &&
++           sr_mga2_outline_feedback(state) && !state->ztest_enable &&
++           !state->blend_enable && !state->logic_op_enable &&
++           state->mask_rgb == 0u;
++}
++
+ static uint32_t pack_dimensions(int width, int height) {
+     uint32_t w = width > 0 ? (uint32_t)width : 1u;
+     uint32_t h = height > 0 ? (uint32_t)height : 1u;
+diff --git a/src/rt/gpu_sdl3vk/shader_state.h b/src/rt/gpu_sdl3vk/shader_state.h
+index 4297248..0c6105e 100644
+--- a/src/rt/gpu_sdl3vk/shader_state.h
++++ b/src/rt/gpu_sdl3vk/shader_state.h
+@@ -21,6 +21,8 @@ enum GeVkShaderFlag {
+     GE_VK_SHADER_FRAMEBUFFER = 65536u,
+     GE_VK_SHADER_CLAMP_U = 131072u,
+     GE_VK_SHADER_CLAMP_V = 262144u,
++    GE_VK_SHADER_SHARPER_FEEDBACK = 524288u,
++    GE_VK_SHADER_OUTLINE_DIRECT = 1048576u,
+ };
+ 
+ typedef struct GeVkShaderState {
+@@ -35,6 +37,8 @@ typedef struct GeVkShaderState {
+ 
+ int ge_vk_shader_direct_compatible(const GeState *state);
+ int ge_vk_shader_direct_stencil_write(const GeState *state);
++int ge_vk_shader_outline_direct_compatible(
++    const GeState *state, uint32_t render_scale);
+ void ge_vk_shader_state_build(
+     const GeState *state, int perspective, int sprite_semantics,
+     uint32_t render_scale, GeVkShaderState *out);
+diff --git a/src/rt/gpu_sdl3vk/shaders/psp.frag b/src/rt/gpu_sdl3vk/shaders/psp.frag
+index 25eca92..3025661 100644
+--- a/src/rt/gpu_sdl3vk/shaders/psp.frag
++++ b/src/rt/gpu_sdl3vk/shaders/psp.frag
+@@ -10,6 +10,9 @@ layout(location = 0) out vec4 o_color;
+ layout(set = 0, binding = 0) uniform sampler2D u_texture;
+ layout(set = 1, binding = 0) uniform sampler2D u_destination_color;
+ layout(set = 1, binding = 1) uniform sampler2D u_destination_depth;
++layout(std430, set = 2, binding = 0) readonly buffer FeedbackClut {
++    uint words[];
++} u_feedback_clut;
+ 
+ layout(push_constant) uniform PC {
+     ivec4 config;
+@@ -36,6 +39,8 @@ const int FLAG_PSP_SAMPLER = 32768;
+ const int FLAG_FRAMEBUFFER = 65536;
+ const int FLAG_CLAMP_U = 131072;
+ const int FLAG_CLAMP_V = 262144;
++const int FLAG_SHARPER_FEEDBACK = 524288;
++const int FLAG_OUTLINE_DIRECT = 1048576;
+ 
+ bool compare_value(int function, int value, int reference) {
+     if (function == 0) return false;
+@@ -167,6 +172,56 @@ ivec4 psp_lerp(ivec4 first, ivec4 second, int weight) {
+     return first + (((second - first) * weight) >> 8);
+ }
+ 
++ivec4 feedback_texel(ivec2 coordinate, int flags) {
++    int scale = render_scale_psp();
++    ivec2 dimensions = texture_dimensions_psp() * scale;
++    coordinate.x = wrap_coordinate(
++        coordinate.x, dimensions.x, (flags & FLAG_CLAMP_U) != 0);
++    coordinate.y = wrap_coordinate(
++        coordinate.y, dimensions.y, (flags & FLAG_CLAMP_V) != 0);
++    coordinate += texture_offset_psp() * scale;
++    ivec4 source = ivec4(
++        texelFetch(u_texture, coordinate, 0) * 255.0 + 0.5);
++    uint clut = uint(pc.color_test_state.w);
++    uint source_format = (clut >> 28) & 3u;
++    uint index = pack_native(source, int(source_format));
++    uint shift = (clut >> 2) & 31u;
++    uint mask = (clut >> 8) & 255u;
++    uint start = ((clut >> 16) & 31u) << 4;
++    uint format = clut & 3u;
++    uint start_mask = format == 3u ? 255u : 511u;
++    index = ((index >> shift) & mask) | (start & start_mask);
++    uint color;
++    if (format == 3u) {
++        color = u_feedback_clut.words[index & 511u];
++    } else {
++        index &= 1023u;
++        uint packed = u_feedback_clut.words[index >> 1];
++        color = (packed >> ((index & 1u) * 16u)) & 65535u;
++    }
++    return unpack_native(color, int(format));
++}
++
++vec4 sample_feedback(vec2 uv, bool nearest, int flags) {
++    uv *= float(render_scale_psp());
++    if (nearest)
++        return vec4(feedback_texel(ivec2(floor(uv)), flags));
++    vec2 position = uv - 0.5;
++    ivec2 base = ivec2(floor(position));
++    ivec2 weight = clamp(
++        ivec2((position - vec2(base)) * 256.0),
++        ivec2(0), ivec2(256));
++    ivec4 upper = psp_lerp(
++        feedback_texel(base, flags),
++        feedback_texel(base + ivec2(1, 0), flags),
++        weight.x);
++    ivec4 lower = psp_lerp(
++        feedback_texel(base + ivec2(0, 1), flags),
++        feedback_texel(base + ivec2(1, 1), flags),
++        weight.x);
++    return vec4(psp_lerp(upper, lower, weight.y));
++}
++
+ vec4 sample_texture_psp(vec2 uv, bool nearest, int flags) {
+     if ((flags & FLAG_FRAMEBUFFER) != 0)
+         uv *= float(render_scale_psp());
+@@ -355,12 +410,15 @@ ivec4 shade_source(out int source_depth, out int flags) {
+             vec2 shifted_uv = uv + vec2(texture_offset_psp());
+             bool nearest = (flags & FLAG_NEAREST) != 0;
+             bool quantized = (flags & FLAG_PSP_SAMPLER) != 0;
+-            vec4 texture_color = quantized
+-                ? sample_texture_psp(uv, nearest, flags)
+-                : texture(
+-                      u_texture,
+-                      shifted_uv / vec2(texture_dimensions_psp())) *
+-                  255.0;
++            vec4 texture_color =
++                (flags & FLAG_SHARPER_FEEDBACK) != 0
++                    ? sample_feedback(uv, nearest, flags)
++                    : quantized
++                        ? sample_texture_psp(uv, nearest, flags)
++                        : texture(
++                              u_texture,
++                              shifted_uv / vec2(texture_dimensions_psp())) *
++                          255.0;
+             int texture_function = pc.config.x & 7;
+             bool texture_rgba =
+                 (flags & FLAG_TEXTURE_RGBA) != 0;
+@@ -469,6 +527,18 @@ void main() {
+     int format = pc.stencil_state.w & 3;
+ 
+     if ((flags & FLAG_DIRECT) != 0) {
++        if ((flags & FLAG_OUTLINE_DIRECT) != 0 &&
++            (flags & FLAG_STENCIL) != 0) {
++            int stencil = int(
++                texelFetch(u_texture, render_pixel, 0).a * 255.0 + 0.5);
++            int reference = (pc.stencil_state.x >> 8) & 255;
++            int mask = (pc.stencil_state.x >> 16) & 255;
++            if (!compare_value(
++                    pc.stencil_state.x & 7, reference & mask,
++                    stencil & mask)) {
++                discard;
++            }
++        }
+         ivec4 result = source;
+         if ((flags & FLAG_DITHER) != 0)
+             result.rgb += dither_value(pixel);
+diff --git a/src/rt/graphics_config.c b/src/rt/graphics_config.c
+index 76110a2..99c93a0 100644
+--- a/src/rt/graphics_config.c
++++ b/src/rt/graphics_config.c
+@@ -73,6 +73,13 @@ static int anti_aliasing_from_name(const char *name) {
+     return -1;
+ }
+ 
++static int outlines_from_name(const char *name) {
++    if (text_equal(name, "original")) return SR_GRAPHICS_OUTLINES_ORIGINAL;
++    if (text_equal(name, "sharper")) return SR_GRAPHICS_OUTLINES_SHARPER;
++    if (text_equal(name, "off")) return SR_GRAPHICS_OUTLINES_OFF;
++    return -1;
++}
++
+ static int toggle_from_name(const char *name) {
+     if (text_equal(name, "off")) return 0;
+     if (text_equal(name, "on")) return 1;
+@@ -87,6 +94,7 @@ void sr_graphics_config_defaults(SrGraphicsConfig *config) {
+     config->d3d12_full_rate = 0u;
+     config->anti_aliasing = SR_GRAPHICS_ANTI_ALIASING_OFF;
+     config->skip_startup = 0u;
++    config->outlines = SR_GRAPHICS_OUTLINES_ORIGINAL;
+ }
+ 
+ const char *sr_graphics_renderer_name(int renderer) {
+@@ -107,6 +115,15 @@ const char *sr_graphics_anti_aliasing_name(int anti_aliasing) {
+     }
+ }
+ 
++const char *sr_graphics_outlines_name(int outlines) {
++    switch (outlines) {
++        case SR_GRAPHICS_OUTLINES_ORIGINAL: return "original";
++        case SR_GRAPHICS_OUTLINES_SHARPER: return "sharper";
++        case SR_GRAPHICS_OUTLINES_OFF: return "off";
++        default: return NULL;
++    }
++}
++
+ int sr_graphics_config_parse(
+     SrGraphicsConfig *config, const char *text,
+     char *error, size_t error_size) {
+@@ -282,6 +299,23 @@ int sr_graphics_config_parse(
+             }
+             seen |= setting;
+             config->skip_startup = (uint32_t)enabled;
++        } else if (text_equal(name, "outlines")) {
++            int outlines = outlines_from_name(value);
++            setting = 64u;
++            if (outlines < 0) {
++                set_error(
++                    error, error_size, line_number,
++                    "expected original, sharper, or off", value);
++                return 0;
++            }
++            if (seen & setting) {
++                set_error(
++                    error, error_size, line_number,
++                    "duplicate setting", name);
++                return 0;
++            }
++            seen |= setting;
++            config->outlines = outlines;
+         } else {
+             set_error(
+                 error, error_size, line_number,
+@@ -399,12 +433,13 @@ int sr_graphics_config_init(void) {
+         stderr,
+         "graphics: loaded %s (renderer %s, internal resolution %ux, "
+         "texture scale %ux, D3D12 full-rate %s, anti-aliasing %s, "
+-        "startup skip %s)\n",
++        "startup skip %s, outlines %s)\n",
+         s_config_path, sr_graphics_renderer_name(s_config.renderer),
+         s_config.internal_resolution, s_config.texture_scale,
+         s_config.d3d12_full_rate ? "on" : "off",
+         sr_graphics_anti_aliasing_name(s_config.anti_aliasing),
+-        s_config.skip_startup ? "on" : "off");
++        s_config.skip_startup ? "on" : "off",
++        sr_graphics_outlines_name(s_config.outlines));
+     return 1;
+ }
+ 
+@@ -425,6 +460,7 @@ int sr_graphics_config_save(
+     char temporary[1100];
+     const char *renderer;
+     const char *anti_aliasing;
++    const char *outlines;
+     FILE *file;
+     int length;
+     int ok;
+@@ -439,7 +475,8 @@ int sr_graphics_config_save(
+     renderer = sr_graphics_renderer_name(config->renderer);
+     anti_aliasing =
+         sr_graphics_anti_aliasing_name(config->anti_aliasing);
+-    if (!renderer || !anti_aliasing ||
++    outlines = sr_graphics_outlines_name(config->outlines);
++    if (!renderer || !anti_aliasing || !outlines ||
+         config->internal_resolution < SR_GRAPHICS_SCALE_MIN ||
+         config->internal_resolution > SR_GRAPHICS_SCALE_MAX ||
+         config->texture_scale < SR_TEXTURE_SCALE_MIN ||
+@@ -468,16 +505,18 @@ int sr_graphics_config_save(
+     }
+     ok = fprintf(
+             file,
+-        "# PSP recomp graphics config v4\n"
++        "# PSP recomp graphics config v5\n"
+         "renderer = %s\n"
+         "internal_resolution = %u\n"
+         "texture_scale = %u\n"
+         "d3d12_full_rate = %u\n"
+         "anti_aliasing = %s\n"
+-        "skip_startup = %s\n",
++        "skip_startup = %s\n"
++        "outlines = %s\n",
+         renderer, config->internal_resolution,
+         config->texture_scale, config->d3d12_full_rate,
+-        anti_aliasing, config->skip_startup ? "on" : "off") > 0 &&
++        anti_aliasing, config->skip_startup ? "on" : "off",
++        outlines) > 0 &&
+          fflush(file) == 0 &&
+          _commit(_fileno(file)) == 0;
+     if (fclose(file) != 0) ok = 0;
+@@ -507,11 +546,11 @@ int sr_graphics_config_save(
+         stderr,
+         "graphics: saved %s (renderer %s, internal resolution %ux, "
+         "texture scale %ux, D3D12 full-rate %s, anti-aliasing %s, "
+-        "startup skip %s)\n",
++        "startup skip %s, outlines %s)\n",
+         s_config_path, renderer, config->internal_resolution,
+         config->texture_scale,
+         config->d3d12_full_rate ? "on" : "off",
+-        anti_aliasing, config->skip_startup ? "on" : "off");
++        anti_aliasing, config->skip_startup ? "on" : "off", outlines);
+     return 1;
+ }
+ 
+diff --git a/src/rt/graphics_config.h b/src/rt/graphics_config.h
+index 18bc69b..16061be 100644
+--- a/src/rt/graphics_config.h
++++ b/src/rt/graphics_config.h
+@@ -25,6 +25,12 @@ enum SrGraphicsAntiAliasing {
+     SR_GRAPHICS_ANTI_ALIASING_SMAA,
+ };
+ 
++enum SrGraphicsOutlines {
++    SR_GRAPHICS_OUTLINES_ORIGINAL,
++    SR_GRAPHICS_OUTLINES_SHARPER,
++    SR_GRAPHICS_OUTLINES_OFF,
++};
++
+ typedef struct SrGraphicsConfig {
+     int renderer;
+     uint32_t internal_resolution;
+@@ -32,6 +38,7 @@ typedef struct SrGraphicsConfig {
+     uint32_t d3d12_full_rate;
+     int anti_aliasing;
+     uint32_t skip_startup;
++    int outlines;
+ } SrGraphicsConfig;
+ 
+ void sr_graphics_config_defaults(SrGraphicsConfig *config);
+@@ -44,6 +51,7 @@ const SrGraphicsConfig *sr_graphics_config_get(void);
+ const char *sr_graphics_config_path(void);
+ const char *sr_graphics_renderer_name(int renderer);
+ const char *sr_graphics_anti_aliasing_name(int anti_aliasing);
++const char *sr_graphics_outlines_name(int outlines);
+ int sr_graphics_config_save(
+     const SrGraphicsConfig *config, char *error, size_t error_size);
+ int sr_graphics_effective_scale(
+diff --git a/src/rt/graphics_settings.c b/src/rt/graphics_settings.c
+index ecb8fa3..500d1d2 100644
+--- a/src/rt/graphics_settings.c
++++ b/src/rt/graphics_settings.c
+@@ -15,6 +15,7 @@
+ #define IDC_D3D12_SHADING 1004
+ #define IDC_ANTI_ALIASING 1005
+ #define IDC_SKIP_STARTUP 1006
++#define IDC_OUTLINES 1007
+ 
+ typedef struct GraphicsDialogContext {
+     SrGraphicsConfig config;
+@@ -83,16 +84,18 @@ static INT_PTR CALLBACK graphics_dialog_proc(
+         HWND texture_scale;
+         HWND anti_aliasing;
+         HWND d3d12_shading;
++        HWND outlines;
+         int selected_renderer = 0;
+         int selected_resolution = 0;
+         int selected_texture_scale = 0;
+         int selected_anti_aliasing = 0;
+         int selected_d3d12_shading = 0;
+-        int help_y = 202;
+-        int button_y = 252;
++        int selected_outlines = 0;
++        int help_y = 240;
++        int button_y = 290;
+         const char *description =
+-            "Internal resolution improves geometry and edges. xBRZ improves game textures "
+-            "on hardware renderers. SMAA smooths the final D3D12 image.";
++            "Sharper affects scaled D3D12/Vulkan rendering; "
++            "Off hides detected character outlines.";
+         char label[64];
+ 
+         context = (GraphicsDialogContext *)lparam;
+@@ -216,24 +219,44 @@ static INT_PTR CALLBACK graphics_dialog_proc(
+             d3d12_shading, CB_SETCURSEL,
+             (WPARAM)selected_d3d12_shading, 0);
+ 
++        add_control(
++            dialog, 0, "STATIC", "Character outlines:", 0,
++            16, 207, 112, 20, 0);
++        outlines = add_control(
++            dialog, WS_EX_CLIENTEDGE, "COMBOBOX", "",
++            WS_TABSTOP | CBS_DROPDOWNLIST | WS_VSCROLL,
++            132, 203, 210, 100, IDC_OUTLINES);
++        add_combo_item(
++            outlines, "Original", SR_GRAPHICS_OUTLINES_ORIGINAL,
++            &selected_outlines, context->config.outlines);
++        add_combo_item(
++            outlines, "Sharper (D3D12 / Vulkan)", SR_GRAPHICS_OUTLINES_SHARPER,
++            &selected_outlines, context->config.outlines);
++        add_combo_item(
++            outlines, "Off", SR_GRAPHICS_OUTLINES_OFF,
++            &selected_outlines, context->config.outlines);
++        SendMessage(
++            outlines, CB_SETCURSEL, (WPARAM)selected_outlines, 0);
++
+ #ifdef SR_SKIP_STARTUP_PRESENT
+         {
+             HWND skip_startup = add_control(
+                 dialog, 0, "BUTTON",
+                 "Skip startup sequence (go directly to main menu)",
+                 WS_TABSTOP | BS_AUTOCHECKBOX,
+-                16, 202, 326, 20, IDC_SKIP_STARTUP);
++                16, 240, 326, 20, IDC_SKIP_STARTUP);
+             SendMessage(
+                 skip_startup, BM_SETCHECK,
+                 context->config.skip_startup
+                     ? BST_CHECKED : BST_UNCHECKED,
+                 0);
+         }
+-        help_y = 230;
+-        button_y = 280;
++        help_y = 268;
++        button_y = 318;
+         description =
+-            "Startup skipping runs normal game initialization at turbo speed, then restores "
+-            "real-time pacing at the main menu.";
++            "Sharper affects scaled D3D12/Vulkan rendering; "
++            "Off hides detected character outlines. "
++            "Startup skipping fast-forwards to the main menu.";
+ #endif
+         add_control(
+             dialog, 0, "STATIC", description,
+@@ -259,6 +282,7 @@ static INT_PTR CALLBACK graphics_dialog_proc(
+                 GetDlgItem(dialog, IDC_ANTI_ALIASING);
+             HWND d3d12_shading =
+                 GetDlgItem(dialog, IDC_D3D12_SHADING);
++            HWND outlines = GetDlgItem(dialog, IDC_OUTLINES);
+             LRESULT renderer_index =
+                 SendMessage(renderer, CB_GETCURSEL, 0, 0);
+             LRESULT resolution_index =
+@@ -269,12 +293,15 @@ static INT_PTR CALLBACK graphics_dialog_proc(
+                 SendMessage(anti_aliasing, CB_GETCURSEL, 0, 0);
+             LRESULT d3d12_shading_index =
+                 SendMessage(d3d12_shading, CB_GETCURSEL, 0, 0);
++            LRESULT outlines_index =
++                SendMessage(outlines, CB_GETCURSEL, 0, 0);
+             char error[512];
+             if (renderer_index == CB_ERR ||
+                 resolution_index == CB_ERR ||
+                 texture_scale_index == CB_ERR ||
+                 anti_aliasing_index == CB_ERR ||
+-                d3d12_shading_index == CB_ERR) {
++                d3d12_shading_index == CB_ERR ||
++                outlines_index == CB_ERR) {
+                 MessageBoxA(
+                     dialog, "Select all graphics options.",
+                     "Graphics Settings", MB_OK | MB_ICONERROR);
+@@ -299,6 +326,10 @@ static INT_PTR CALLBACK graphics_dialog_proc(
+                 (uint32_t)SendMessage(
+                     d3d12_shading, CB_GETITEMDATA,
+                     (WPARAM)d3d12_shading_index, 0);
++            context->config.outlines =
++                (int)SendMessage(
++                    outlines, CB_GETITEMDATA,
++                    (WPARAM)outlines_index, 0);
+ #ifdef SR_SKIP_STARTUP_PRESENT
+             context->config.skip_startup =
+                 SendMessage(
+@@ -317,6 +348,18 @@ static INT_PTR CALLBACK graphics_dialog_proc(
+                     "Graphics Settings", MB_OK | MB_ICONERROR);
+                 return TRUE;
+             }
++            if (context->config.outlines == SR_GRAPHICS_OUTLINES_SHARPER &&
++                (context->config.renderer == SR_GRAPHICS_RENDERER_SOFTWARE
++#if !defined(SR_D3D12) && !defined(SR_SDL3VK)
++                 || context->config.renderer == SR_GRAPHICS_RENDERER_AUTO
++#endif
++                )) {
++                MessageBoxA(
++                    dialog,
++                    "Sharper outlines require the D3D12 or Vulkan renderer.",
++                    "Graphics Settings", MB_OK | MB_ICONERROR);
++                return TRUE;
++            }
+             if (!sr_graphics_config_save(
+                     &context->config, error, sizeof(error))) {
+                 MessageBoxA(
+@@ -356,9 +399,9 @@ int sr_graphics_settings_show(const char *title) {
+         WS_POPUP | WS_CAPTION | WS_SYSMENU | DS_MODALFRAME | DS_CENTER;
+     dialog_template.dialog.cx = 236;
+ #ifdef SR_SKIP_STARTUP_PRESENT
+-    dialog_template.dialog.cy = 218;
++    dialog_template.dialog.cy = 244;
+ #else
+-    dialog_template.dialog.cy = 198;
++    dialog_template.dialog.cy = 224;
+ #endif
+     result = DialogBoxIndirectParamW(
+         GetModuleHandleW(NULL), &dialog_template.dialog, NULL,
+diff --git a/src/rt/gui.c b/src/rt/gui.c
+index 40455fb..3d1073d 100644
+--- a/src/rt/gui.c
++++ b/src/rt/gui.c
+@@ -365,6 +365,14 @@ int gui_init(const char *title) {
+ #endif
+         }
+     }
++    if (graphics &&
++        graphics->outlines == SR_GRAPHICS_OUTLINES_SHARPER &&
++        !want_d3d12 && !want_vk) {
++        fprintf(
++            stderr,
++            "gui_init: sharper outlines require the D3D12 or Vulkan renderer\n");
++        return 0;
++    }
+ 
+ #ifdef SR_D3D12
+     if (want_d3d12) {
+@@ -426,6 +434,8 @@ int gui_init(const char *title) {
+                     s_ge_backend = gegpu_backend();
+                     if (!s_ge_backend || !s_ge_backend->init || !s_ge_backend->init()) {
+                         fprintf(stderr, "gui_init: Vulkan GE backend initialization failed\n");
++                        if (s_ge_backend && s_ge_backend->shutdown)
++                            s_ge_backend->shutdown();
+                         sdl3vk_shutdown();
+                         s_sdl3 = 0;
+                         s_on = 0;
+@@ -554,10 +564,17 @@ int gui_message(
+     return 1;
+ }
+ int gui_capture_next(const char *path) {
++    (void)path;
+ #ifdef SR_D3D12
+     if (s_on && s_d3d12) return ged3d12_capture_next(path);
+-#else
+-    (void)path;
++#endif
++#ifdef SR_SDL3VK
++    {
++        const char *capture = getenv("SR_VK_CAPTURE_INTERNAL");
++        if (s_on && s_sdl3 && s_ge_backend == gegpu_backend() &&
++            capture && capture[0] && strcmp(capture, "0") != 0)
++            return gegpu_capture_next(path);
++    }
+ #endif
+     return 0;
+ }
+diff --git a/tools/tests/vulkan_shader_state_test.c b/tools/tests/vulkan_shader_state_test.c
+index 7f196fb..a4b2684 100644
+--- a/tools/tests/vulkan_shader_state_test.c
++++ b/tools/tests/vulkan_shader_state_test.c
+@@ -89,6 +89,72 @@ static void test_stencil_classification(void) {
+         fail("destination-dependent 8888 stencil increment admitted");
+ }
+ 
++static void test_outline_direct_classification(void) {
++    GeState state;
++    memset(&state, 0, sizeof(state));
++    state.mga2_sharper_outline = 1;
++    state.fbp = 0x04000000u;
++    state.fbw = 512u;
++    state.fbfmt = 1u;
++    state.tex_enable = 1;
++    state.tex_addr = 0x04000000u;
++    state.tex_bufw = 512u;
++    state.tex_fmt = 6u;
++    state.tex_w = 512;
++    state.tex_h = 512;
++    state.clut_fmt = 0x13du;
++    state.stencil_test_enable = 1;
++    state.stencil_test = 0xff0002u;
++    if (!ge_vk_shader_outline_direct_compatible(&state, 4))
++        fail("alpha-only outline rejected from direct path");
++    if (ge_vk_shader_outline_direct_compatible(NULL, 4) ||
++        ge_vk_shader_outline_direct_compatible(&state, 1) ||
++        ge_vk_shader_outline_direct_compatible(&state, 9))
++        fail("invalid outline state or scale admitted");
++
++    state.mga2_sharper_outline = 0;
++    if (ge_vk_shader_outline_direct_compatible(&state, 4))
++        fail("non-outline admitted to outline direct path");
++    state.mga2_sharper_outline = 1;
++    state.blend_enable = 1;
++    if (ge_vk_shader_outline_direct_compatible(&state, 4))
++        fail("outline blending admitted to direct path");
++    state.blend_enable = 0;
++    state.logic_op_enable = 1;
++    if (ge_vk_shader_outline_direct_compatible(&state, 4))
++        fail("outline logic operation admitted to direct path");
++    state.logic_op_enable = 0;
++    state.mask_rgb = 1;
++    if (ge_vk_shader_outline_direct_compatible(&state, 4))
++        fail("outline RGB mask admitted to direct path");
++    state.mask_rgb = 0;
++    state.ztest_enable = 1;
++    if (ge_vk_shader_outline_direct_compatible(&state, 4))
++        fail("depth-tested outline admitted to direct path");
++    state.ztest_enable = 0;
++    for (unsigned shift = 0; shift <= 16; shift += 8) {
++        state.stencil_op = 1u << shift;
++        if (ge_vk_shader_outline_direct_compatible(&state, 4))
++            fail("stencil-mutating outline admitted to direct path");
++    }
++    state.stencil_op = 0u;
++    state.clut_fmt = 0x139u;
++    if (ge_vk_shader_outline_direct_compatible(&state, 4))
++        fail("RGB-indexed feedback admitted to direct path");
++    state.clut_fmt = 0x33du;
++    if (ge_vk_shader_outline_direct_compatible(&state, 4))
++        fail("multi-bit feedback admitted to direct path");
++    state.clut_fmt = 0x13du;
++    state.tex_addr += 2u;
++    if (ge_vk_shader_outline_direct_compatible(&state, 4))
++        fail("non-self feedback admitted to direct path");
++    state.tex_addr -= 2u;
++    state.tex_filter = 4u;
++    state.tex_max_level = 1;
++    if (ge_vk_shader_outline_direct_compatible(&state, 4))
++        fail("mipmapped feedback admitted to direct path");
++}
++
+ static void test_state_packing(void) {
+     GeState source;
+     GeVkShaderState state;
+@@ -218,6 +284,7 @@ static void test_invalid_render_scale(void) {
+ int main(void) {
+     test_direct_classification();
+     test_stencil_classification();
++    test_outline_direct_classification();
+     test_state_packing();
+     test_clear_packing();
+     test_invalid_render_scale();

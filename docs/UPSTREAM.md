@@ -34,6 +34,7 @@ repository.
 | P1 | Loader/HLE | Encrypted firmware modules can use either `~PSP` or `~SCE`, including raw-LBN paths | Route both signatures through the same exact identity policy | Validated implementation |
 | P1 | UMD I/O | The title depends on real asynchronous UMD ioctl seek behavior | Execute supported ioctls through the async worker; never return synthetic success | Validated implementation |
 | P2 | GE capture | Fixed vertex ceilings reject valid dense frames | Grow capture storage within explicit safety limits and spill through fenced upload slabs | Validated implementation |
+| P2 | Feedback quality | Native-texel feedback can leave blocky outlines at high resolution despite SMAA | Generalize the title's opt-in physical-texel enhancement without changing native semantics | Title-specific implementation |
 | P2 | Savedata | Secure savedata mode 4 is required by real North American saves | Keep decryption support and add synthetic create/reload coverage | Partially validated |
 | P2 | Profiling | Backend stage timers can remain small while guest/GE frontend work misses the frame budget | Split frontend samples into scheduler, native guest, GE list, vertex, and HLE phases | Open improvement |
 | P2 | Diagnostics | Queued GPU captures do not flush the final request on bounded exit | Drain or explicitly fail pending captures and report actual capture timing | Open improvement |
@@ -283,6 +284,19 @@ Recommended coverage:
 - CLUT shift/mask/start combinations;
 - same-target ordering; and
 - forced CPU fallback differential captures.
+
+At high internal resolutions, native-texel sampling can also preserve blocky
+silhouettes in framebuffer-based character outlines. This project now offers
+opt-in physical-texel sampling on D3D12 and Vulkan and a separately guarded
+outline suppression mode. The normal renderer remains the default. The Vulkan
+outline path can reuse an alpha-only feedback snapshot for a KEEP-stencil,
+RGB-only, depth-disabled state, avoiding repeated full-target destination
+copies. Sampled tutorial and Arena captures, native-resolution equality, and
+short paced performance checks are described in
+[MGA2-F-020](./FINDINGS.md#mga2-f-020---character-outline-pixelation).
+These title-specific checks do not prove a general feedback replacement:
+scaled offsets, wrapping, clamping, filtering, other effects, and performance
+still need broader coverage before upstream generalization.
 
 ### 3.4 Direct stencil paths need proof of destination independence
 
