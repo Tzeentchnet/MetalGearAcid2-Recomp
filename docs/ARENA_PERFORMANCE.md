@@ -1,9 +1,8 @@
 # Arena Performance Optimization Ledger
 
-This document is the investigation handoff for the fixed-quality Arena
-performance work. It records what was measured, which changes remain in the
-worktree, which experiments were rejected, and where the next investigation
-should begin.
+This document records the fixed-quality Arena performance investigation: what
+was measured, which optimizations were retained, which experiments were
+rejected, and where future work should begin.
 
 The retained configuration passes the fixed profile for the Dead Cell
 introduction and Fortune transition. Arena gameplay remains the limiting case:
@@ -249,9 +248,9 @@ paced gameplay run improved aggregate throughput from 34.99 to 46.83 FPS, but
 still measured 34.16 ms p95, a 34.76 ms maximum, and a 22.90 ms maximum GPU
 sample.
 
-`/O2` remains in the worktree as the appropriate release speed profile, but
-one run does not prove that it solves native guest hotspots. It did not clear
-the expensive-frame or GPU gates.
+`/O2` is the configured release speed profile, but one run does not prove that
+it solves native guest hotspots. It did not clear the expensive-frame or GPU
+gates.
 
 ### 6. Destination-snapshot rectangles and redundant D3D12 state (branch `perf/arena-indexed-capture`)
 
@@ -1182,7 +1181,7 @@ During iteration:
 6. defer the full two-case and three-run matrix until a candidate clears the
    single-case gate.
 
-## Validation at this pause point
+## Recorded validation
 
 Completed:
 
@@ -1191,48 +1190,19 @@ Completed:
 - all eight Python benchmark-helper tests;
 - focused `mga2_perf_stats` CTest;
 - focused `mga2_d3d12_vertex` CTest;
-- shared runtime commit `3de8644` pushed and pinned by full hash; and
+- shared runtime commit `3de8644` was pushed and pinned by full hash; and
 - `git diff --check` in both repositories.
 
-Still required:
+Open performance validation:
 
 - Recover enough CPU margin that the latest gameplay matrix passes three
   consecutive paced runs; the most recent final matrix passed only 2/3.
 - Re-run the Stage 01 route.
 - Run a paced smoke test of at least one additional Arena selection; the
   presentation-45,000 checks currently establish visual equivalence only.
-- Run the relevant shared runtime suite and a final Release build after the
-  last runtime change.
+- Run the relevant shared runtime suite and a final Release build after future
+  runtime performance changes.
 
-## Local artifact index
-
-The following ignored directories contain the most useful reduced reports and
-logs for continued local investigation:
-
-| Directory | Purpose |
-|---|---|
-| `out\benchmarks\arena-profile-dead-cell` | Initial detailed Dead Cell profile |
-| `out\benchmarks\arena-patch-subphase-dead-cell` | Optimized spline subphase profile; diagnostic readbacks |
-| `out\benchmarks\arena-gameplay-profile-current` | Gameplay profile before partial feedback |
-| `out\benchmarks\arena-gameplay-ordered-partial` | Rejected conservative dirty-region attempt |
-| `out\benchmarks\arena-gameplay-union-feedback` | Retained dirty-union feedback at generated `/O1` |
-| `out\benchmarks\arena-gameplay-o2` | First generated `/O2` gameplay run |
-| `out\benchmarks\arena-gameplay-projection-cache` | Reverted projection-cache experiment |
-| `out\benchmarks\arena-gameplay-vertex-indirection` | Current vertex-reference experiment |
-| `out\benchmarks\perf-memo2-r1` through `perf-memo2-r3` | Three consecutive passing state-memo matrices |
-| `out\benchmarks\perf-final-r1` through `perf-final-r3` | Final repeat matrix; run 3 gameplay misses only the FPS gate |
-| `out\benchmarks\dead-cell-current-20261025-0936` | Fresh clean Dead Cell acceptance run at the current graphics profile |
-| `out\benchmarks\arena-fortune-transition-locator-*` | Coarse, fine, and exact visual sweeps locating the Fortune cut |
-| `out\benchmarks\arena-fortune-transition-baseline-r1` through `arena-fortune-transition-baseline-r3` | Three capture-free paced transition profiles |
-| `out\benchmarks\arena-fortune-transition-analysis` | Matched render rows and reduced transition summary |
-| `out\benchmarks\arena-fortune-scalar-reference` | Scalar reference for the permanent Fortune benchmark case |
-| `out\benchmarks\arena-fortune-simd-r4` through `arena-fortune-simd-r6` | Three consecutive passing optimized Fortune runs |
-| `out\benchmarks\arena-fortune-simd-diff-scalar` and `arena-fortune-simd-diff-vector-add4` | Exact scalar/SIMD spline hashes, D3D12 hashes, and captures |
-| `out\benchmarks\arena-simd-regression-r3` through `arena-simd-regression-r5` | Three consecutive passing Dead Cell/gameplay matrices |
-| `out\benchmarks\tutorial-simd-regression` | Passing tutorial benchmark |
-| `out\benchmarks\stage01-simd-regression` | Stage 01 route and timing smoke test |
-
-The earlier shared runtime baseline was committed as `3de8644`; the spline SIMD
-changes described here are the current runtime worktree changes. Do not remove
-the existing untracked runtime `build\` directory or
-`interp_fallback_test.misses`.
+Benchmark outputs are intentionally ignored because they can contain
+game-derived saves, captures, and traces. The commands in this document
+recreate evidence locally from a user-supplied disc and save fixture.

@@ -1,5 +1,8 @@
 # Validation Status
 
+This document records the validated scope for the `v0.1.0` prerelease. It is
+not a full-game compatibility statement.
+
 ## Current status
 
 - The disc and main executable are pinned and verified.
@@ -37,7 +40,7 @@
 |---|---|---|
 | Exact input | Pass | ISO size and SHA-1 verified |
 | Extraction inventory | Pass | 80 plaintext and 27 encrypted PRXs |
-| Catalog match | Pass | 0 exact, 4 normalized review candidates |
+| Optional catalog evidence | Pass when available | A local 37-function catalog produced 0 exact and 4 normalized review candidates; generation does not require it |
 | Main code generation | Pass | 18,401 functions, 0 trapping stubs |
 | Dynamic code generation | Pass | 5,166 functions across 10 exact dispatch tables, 0 trapping stubs |
 | Exact cache rerun | Pass | 23,260 hits, 0 misses/writes |

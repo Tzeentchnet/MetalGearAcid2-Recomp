@@ -1,21 +1,26 @@
 # Metal Gear Acid 2 Recomp
 
 Source-only Windows static recompilation work for **Metal Gear Acid 2
-(ULUS-10077 v1.00)** using the local `psp-recomp` toolkit.
+(ULUS-10077 v1.00)** using the public
+[`psp-recomp`](https://github.com/Tzeentchnet/psp-recomp) toolkit.
 
 No game executable, generated game C, disc data, trace, save, or capture should
 be committed. Supply your own supported USA ISO.
+
+> [!WARNING]
+> **v0.1.0 is a prerelease, not a full-game compatibility claim.** The opening
+> tutorial and selected save-based scenes are validated, but secure save
+> creation/reload, media behavior, full playthroughs, and soak testing remain
+> incomplete. Review [`docs/STATUS.md`](docs/STATUS.md) before building.
 
 > [!NOTE]
 > **Why isn't there just an .exe to download?** Two reasons. First, safety:
 > please don't download random .exe files from the internet, even from
 > GitHub releases, including this one if it ever shows up! It's just good
-> practice to be careful about what you run on your computer. Second, it's
-> the law: this project doesn't own Metal Gear Acid 2, so it's not
-> allowed to hand out a ready-to-play build of the game. Instead, you build
-> the program yourself from this source code and combine it with a copy of
-> the game disc that you already legally own. That way nobody's copyrighted
-> game data ever leaves your own computer.
+> practice to be careful about what you run on your computer. Second, this
+> project does not distribute copyrighted Metal Gear Acid 2 content. Instead,
+> you build the program from source and use your own legally obtained disc
+> image, so game data remains on your computer.
 
 ## Supported input
 
@@ -72,9 +77,17 @@ variable-rate shading on supported GPUs; **Full resolution** shades every
 internal-resolution fragment and is the appropriate D3D12 setting for 4K
 screenshots.
 
+## Startup shortcut
+
+Enable **Skip startup sequence (go directly to main menu)** in the launcher
+to execute the normal memory-stick checks and title initialization at turbo
+speed, then transition directly to the menu without playing the opening logos.
+The option is disabled by default and does not bypass save initialization.
+
 Settings are persisted in `graphics.ini` beside the executable. The equivalent
 keys are `renderer`, `internal_resolution`, `texture_scale`, and
-`d3d12_full_rate`; `anti_aliasing` accepts `off` or `smaa`.
+`d3d12_full_rate`; `anti_aliasing` accepts `off` or `smaa`, and
+`skip_startup` accepts `off` or `on`.
 
 ## Requirements
 
@@ -84,16 +97,36 @@ keys are `renderer`, `internal_resolution`, `texture_scale`, and
 - Visual Studio 2022 Build Tools with clang-cl and a Windows SDK
 - Vulkan SDK when building the default Vulkan backend. A standard
   `C:\VulkanSDK\<version>` install is detected automatically.
-- `psp-recomp` commit `dca4a7c` or newer at `D:\Github\psp-recomp`, or pass
-  another `PSP_RECOMP_DIR` to CMake and `--toolkit` to the generator
+- `psp-recomp` commit
+  `b56ff30ef5997b9f168209df8c33156e82402e7b`, pinned in
+  [`config/mga2.toml`](config/mga2.toml). A sibling checkout at
+  `..\psp-recomp` is used by default; `PSP_RECOMP_DIR`, CMake's
+  `PSP_RECOMP_DIR`, and generator/installer `--toolkit` options can override
+  it.
 
 The default preset downloads the pinned SDL3 3.2.20 VC development package
 when SDL3 is not already discoverable by CMake. Set `MGA2_FETCH_SDL3=OFF` and
 provide `SDL3_DIR` to require a local package instead.
 
-The generator honors `PSP_RECOMP_CODEGEN_CACHE` and
-`PSP_RECOMP_FUNCTION_CATALOG`. When they are unset, it discovers the private
-stores below `%LOCALAPPDATA%\psp-recomp`.
+The generator can use `PSP_RECOMP_CODEGEN_CACHE` to accelerate repeat runs;
+the default cache below `%LOCALAPPDATA%\psp-recomp` is created on demand.
+`PSP_RECOMP_FUNCTION_CATALOG` is optional identity evidence and is never
+required for code generation. Set it to `0` to skip matching; any other
+explicitly configured catalog path must exist.
+
+## Get the source
+
+Clone this project and the public toolkit beside each other:
+
+```bat
+git clone https://github.com/Tzeentchnet/MetalGearAcid2-Recomp.git
+git clone https://github.com/Tzeentchnet/psp-recomp.git
+cd MetalGearAcid2-Recomp
+git -C ..\psp-recomp checkout b56ff30ef5997b9f168209df8c33156e82402e7b
+```
+
+The pin is deliberate: generated code, runtime behavior, and project
+integration are validated together.
 
 ## Quick install
 
@@ -132,8 +165,9 @@ install.bat --software-only
 
 `--software-only` uses the `clang-cl-software` preset and does not require the
 Vulkan SDK. Existing `PSP_RECOMP_DIR`, `PSP_RECOMP_CODEGEN_CACHE`, and
-`PSP_RECOMP_FUNCTION_CATALOG` values are preserved; otherwise the documented
-defaults are used. Run `install.bat --help` for the complete option summary.
+`PSP_RECOMP_FUNCTION_CATALOG` values are preserved. The code-generation cache
+and function catalog are optional. Run `install.bat --help` for the complete
+option summary.
 
 ## Extract and generate
 
@@ -142,9 +176,10 @@ python tools\mga2\extract.py ".\Metal Gear Acid 2 (USA).iso"
 python tools\mga2\gen.py
 ```
 
-The generator runs catalog matching for identity evidence, relocates each
-image, maps imports, records the function inventories, and emits split C
-through the exact codegen cache. The main module is written beneath
+When a function catalog is available, the generator records matches as
+identity evidence. It always relocates each image, maps imports, records the
+function inventories, and emits split C; the optional exact cache accelerates
+unchanged reruns. The main module is written beneath
 `build\mga2\gen`; configured native PRXs use unique symbol prefixes beneath
 `build\mga2\gen\modules`. Dynamic tables use runtime JAL resolution and verify
 guest function bytes before native dispatch. Normalized catalog matches do not
@@ -210,78 +245,15 @@ out\build\clang-cl\mga2.exe --configure
 The configuration launcher starts the game after **Play Game** is selected;
 the title-bar close button exits without launching.
 
-## Tutorial performance benchmark
+Performance benchmarks and Vulkan visual validation are documented in
+[`docs/BENCHMARKS.md`](docs/BENCHMARKS.md).
 
-After building the combined renderer, run the deterministic opening-dialog
-benchmark with:
+## Release and license
 
-```powershell
-python tools\mga2\benchmark_tutorial.py
-```
-
-The benchmark requires the D3D12 4x internal-resolution, 2x xBRZ, full-rate
-profile in the executable's `graphics.ini`. It fast-forwards the checked-in
-input replay to presentation 30,900, includes the CIRCLE pulse at presentation
-31,000, and validates a 120-flip steady-state window. The default gates require
-at least 59 displayed FPS, p95 at or below 18 ms, no frame above 33.4 ms, GPU
-time within one 59.94 Hz period, active framebuffer-feedback aliases, and no
-more than four cumulative startup/shutdown framebuffer readbacks.
-
-Logs, the performance CSV, and a machine-readable `summary.json` are written
-under `out\benchmarks`. Use `--iso`, `--executable`, or `--output` to override
-the default local paths.
-
-## Arena performance benchmark
-
-The completed-save Arena route is the primary renderer and runtime stress
-test. Supply an isolated memory-stick root containing
-`PSP\SAVEDATA\ULUS10077003`; its `00000000.000` file must be exactly 48,800
-bytes. Then run:
-
-```powershell
-python tools\mga2\benchmark_arena.py `
-  --memstick build\mga2\arena-d3d12-shadow-fix\memstick
-```
-
-The default run validates two 120-host-flip windows: the Dead Cell
-introduction around presentation 28,000 and playable Arena card combat around
-presentation 38,000. Fast-forwarding stops 120 guest presentations before
-each measurement window so transition work is not mistaken for steady-state
-rendering. The fixed acceptance profile and gates are identical to the
-tutorial benchmark: D3D12 at 4x internal resolution, 2x xBRZ, full-rate
-shading, at least 59 displayed FPS, p95 no greater than 18 ms, no frame above
-33.4 ms, no GPU sample above 16.68 ms, at most four cumulative readbacks, and
-active framebuffer aliases and ordered feedback snapshots.
-
-Use `--case dead-cell` or `--case gameplay` while iterating. Add
-`--include-unpaced` only for a non-gating throughput diagnostic. Each case
-writes its command log, per-presentation `perf.csv`, and summary beneath a new
-directory in `out\benchmarks`; the parent `summary.json` records both cases
-and every failed gate.
-
-The current experiment history, rejected approaches, remaining bottlenecks,
-and ranked follow-up work are recorded in
-[`docs/ARENA_PERFORMANCE.md`](docs/ARENA_PERFORMANCE.md).
-
-## Vulkan visual validation
-
-Vulkan correctness is gated by rendered pixels rather than successful route
-completion. Run the completed-save visual lane with:
-
-```powershell
-python tools\mga2\validate_vulkan.py `
-  --memstick build\mga2\arena-d3d12-shadow-fix\memstick `
-  --include-d3d12
-```
-
-The command creates isolated software, Vulkan, and optional D3D12 memory-stick
-copies. It captures presentation 28,000 (Dead Cell cinematic) and presentation
-38,000 (Arena gameplay), then checks the whole frames and focused character,
-stage/player, map-preview, and card-UI regions. The dependency-free PPM metric
-gate uses the software renderer as its oracle and holds Vulkan to bounds
-calibrated against the native-resolution D3D12 cross-check.
-
-Use `--reference-dir`, `--vulkan-dir`, or `--d3d12-dir` to validate existing
-capture directories without rerunning those renderers. Set
-`SR_VK_VALIDATION=1` to require the Khronos validation layer and report Vulkan
-synchronization, layout, descriptor, and lifetime errors.
+- [`docs/RELEASE_NOTES_v0.1.0.md`](docs/RELEASE_NOTES_v0.1.0.md) summarizes
+  the prerelease scope and known limitations.
+- [`CHANGELOG.md`](CHANGELOG.md) records user-visible changes.
+- This project is licensed under
+  [GPL-2.0-or-later](LICENSE), matching the combined `psp-recomp`/PPSSPP
+  runtime obligations. Metal Gear Acid 2 and its assets are not included and
+  remain the property of their respective rights holders.

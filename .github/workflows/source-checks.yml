@@ -1,0 +1,50 @@
+name: Source checks
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  source-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run source-only tests
+        run: python -m unittest discover -s tools/mga2/tests -p "test_*.py"
+
+      - name: Compile Python tools
+        run: python -m compileall -q tools/mga2
+
+      - name: Validate release configuration
+        shell: python
+        run: |
+          from pathlib import Path
+          import tomllib
+
+          config = tomllib.loads(Path("config/mga2.toml").read_text("utf-8"))
+          commit = config["runtime"]["commit"]
+          assert len(commit) == 40
+          assert all(character in "0123456789abcdef" for character in commit)
+          assert config["disc"]["id"] == "ULUS10077"
+          assert config["disc"]["iso_sha1"] == (
+              "87cebe80a93c4231bdbab26ad630c6d8e2fddab5"
+          )
+
+      - name: Reject protected generated inputs
+        shell: bash
+        run: |
+          if git ls-files | grep -E -i '\.(iso|cso|pbp|prx|trace|ppm)$'; then
+            echo "Protected or generated game data is tracked."
+            exit 1
+          fi

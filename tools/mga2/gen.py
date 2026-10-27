@@ -9,7 +9,7 @@ import sys
 import tomllib
 
 ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_TOOLKIT = Path(r"D:\Github\psp-recomp")
+DEFAULT_TOOLKIT = ROOT.parent / "psp-recomp"
 
 
 def parse_args(argv):
@@ -43,7 +43,7 @@ def run(command, *, env, stderr=None):
     )
 
 
-def default_private_path(name, leaf):
+def default_local_path(name, leaf):
     local_app_data = os.environ.get("LOCALAPPDATA")
     if not local_app_data:
         return None
@@ -53,14 +53,25 @@ def default_private_path(name, leaf):
 def prepare_environment():
     env = dict(os.environ)
     if not env.get("PSP_RECOMP_CODEGEN_CACHE"):
-        path = default_private_path("codegen-cache", "")
+        path = default_local_path("codegen-cache", "")
         if path is not None:
             env["PSP_RECOMP_CODEGEN_CACHE"] = os.fspath(path)
     if not env.get("PSP_RECOMP_FUNCTION_CATALOG"):
-        path = default_private_path("function-catalog", "catalog.toml")
-        if path is not None:
+        path = default_local_path("function-catalog", "catalog.toml")
+        if path is not None and path.is_file():
             env["PSP_RECOMP_FUNCTION_CATALOG"] = os.fspath(path)
     return env
+
+
+def resolve_function_catalog(tools, env):
+    configured = env.get("PSP_RECOMP_FUNCTION_CATALOG")
+    if configured == "0":
+        return None, False
+    if configured:
+        return Path(os.path.expandvars(configured)).expanduser(), True
+
+    default = tools.parent / "assets" / "functions" / "catalog.toml"
+    return (default, False) if default.is_file() else (None, False)
 
 
 def generate_prx(
@@ -101,19 +112,49 @@ def generate_prx(
     stubs.unlink(missing_ok=True)
     log_path = out_dir / log_name
 
-    commands = [
-        [
+    catalog_path, catalog_required = resolve_function_catalog(tools, env)
+    if catalog_path is not None and not catalog_path.is_file():
+        if catalog_required:
+            print(
+                "ERROR: PSP_RECOMP_FUNCTION_CATALOG does not exist: "
+                f"{catalog_path}",
+                file=sys.stderr,
+            )
+            return 1
+        catalog_path = None
+
+    commands = []
+    if catalog_path is not None:
+        commands.append([
             sys.executable,
             tools / "function_catalog.py",
             "match",
             prx,
             "--base",
             f"{module['base']:#x}",
+            "--catalog",
+            catalog_path,
             "--output",
             out_dir / matches_name,
             "--symbols",
             out_dir / symbols_name,
-        ],
+        ])
+    else:
+        (out_dir / matches_name).unlink(missing_ok=True)
+        (out_dir / symbols_name).unlink(missing_ok=True)
+        print(f"function catalog unavailable; skipping identity match for {stem}")
+
+    if image_name:
+        commands.append(
+            [
+                sys.executable,
+                tools / "prxload.py",
+                prx,
+                f"{module['base']:#x}",
+                f"--out={out_dir / image_name}",
+            ]
+        )
+    commands.extend([
         [
             sys.executable,
             tools / "imports.py",
@@ -129,18 +170,7 @@ def generate_prx(
             f"--toml={out_dir / functions_name}",
             "--quiet",
         ],
-    ]
-    if image_name:
-        commands.insert(
-            1,
-            [
-                sys.executable,
-                tools / "prxload.py",
-                prx,
-                f"{module['base']:#x}",
-                f"--out={out_dir / image_name}",
-            ],
-        )
+    ])
     for command in commands:
         result = run(command, env=env)
         if result.returncode:
@@ -157,6 +187,16 @@ def generate_prx(
         f"--function-entry={address:#x}"
         for address in module.get("function_entries", [])
     )
+    overrides = module.get("overrides")
+    if overrides:
+        overrides_path = ROOT / overrides
+        if not overrides_path.is_file():
+            print(
+                f"ERROR: missing codegen overrides {overrides_path}",
+                file=sys.stderr,
+            )
+            return 1
+        codegen_command.append(f"--overrides={overrides_path}")
     if symbol_prefix:
         codegen_command.extend(
             [

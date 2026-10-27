@@ -1,0 +1,3 @@
+[[instruction_hook]]
+at = 0x09a12744
+handler = "sr_mga2_skip_startup_action_hook"

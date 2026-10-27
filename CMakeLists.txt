@@ -1,9 +1,9 @@
 cmake_minimum_required(VERSION 3.25)
-project(MGA2Recomp LANGUAGES C CXX)
+project(MGA2Recomp VERSION 0.1.0 LANGUAGES C CXX)
 
 set(MGA2_GEN_DIR "${CMAKE_SOURCE_DIR}/build/mga2/gen" CACHE PATH
     "Directory written by tools/mga2/gen.py")
-set(PSP_RECOMP_DIR "D:/Github/psp-recomp" CACHE PATH
+set(PSP_RECOMP_DIR "${CMAKE_SOURCE_DIR}/../psp-recomp" CACHE PATH
     "PSP recompiler/runtime checkout")
 option(MGA2_ENABLE_D3D12 "Build the SDL3/D3D12 renderer" ON)
 option(MGA2_ENABLE_VULKAN "Build the SDL3/Vulkan renderer" ON)
@@ -31,12 +31,12 @@ if(MGA2_ENABLE_D3D12 OR MGA2_ENABLE_VULKAN)
   if(NOT EXISTS "${PSP_RECOMP_DIR}/src/rt/texture_scaler.cpp" OR
      NOT EXISTS "${PSP_RECOMP_DIR}/third_party/xbrz/xbrz.cpp")
     message(FATAL_ERROR
-    "Hardware rendering requires psp-recomp commit 3de8644 or newer")
+    "Hardware rendering requires the psp-recomp commit pinned in config/mga2.toml")
   endif()
   if(MGA2_ENABLE_D3D12 AND
      NOT EXISTS "${PSP_RECOMP_DIR}/src/rt/gpu_d3d12/smaa.cpp")
     message(FATAL_ERROR
-      "D3D12 rendering requires psp-recomp commit dca4a7c or newer")
+      "D3D12 rendering requires the psp-recomp commit pinned in config/mga2.toml")
   endif()
   find_package(SDL3 CONFIG QUIET COMPONENTS SDL3-shared)
   if(NOT SDL3_FOUND)
@@ -249,6 +249,7 @@ endif()
 add_executable(mga2_driver
   ${RT}/driver.c
   tools/mga2/module_policy.c
+  tools/mga2/startup_skip.c
   ${MGA2_RUNTIME_SRCS})
 target_include_directories(mga2_driver PRIVATE "${RT}")
 target_compile_features(mga2_driver PRIVATE cxx_std_17)
@@ -275,6 +276,13 @@ target_compile_definitions(mga2_driver PRIVATE
   SR_MODULE_START_ATTR=0u
   SR_MODULE_POLICY_INIT=sr_mga2_register_module_policy
   SR_INITIAL_GE_LIST_ID=0
+  SR_SKIP_STARTUP_PRESENT=800u
+  SR_SKIP_STARTUP_INPUT_START=60u
+  SR_SKIP_STARTUP_INPUT_END=650u
+  SR_SKIP_STARTUP_INPUT_PERIOD=60u
+  SR_SKIP_STARTUP_INPUT_WIDTH=4u
+  SR_SKIP_STARTUP_INPUT_MASK=0x0008u
+  SR_SKIP_STARTUP_HOOK=sr_mga2_skip_startup_tick
   SR_ENABLE_KZL_TWIN_STICK=0)
 if(CMAKE_C_SIMULATE_ID STREQUAL "MSVC")
   target_compile_options(mga2_driver PRIVATE /clang:-Wno-macro-redefined)

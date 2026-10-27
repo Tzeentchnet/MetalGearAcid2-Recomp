@@ -19,7 +19,7 @@
 /edram.bin
 /nidseq_mine.txt
 /interp_fallback_test.misses
-/fb_present.ppm
+/fb_*.ppm
 /capture_present_*.ppm
 /snap_*.ppm
 /snap_present_*.ppm

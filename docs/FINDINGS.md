@@ -55,9 +55,10 @@ and interpreter fallback.
 
 **Status:** Confirmed
 
-The private 37-function catalog reports zero exact matches and four normalized
-soft-float candidates: `__extendsfdf2`, `__adddf3`, `__subdf3`, and
-`__negdf2`. They remain review evidence and do not drive generated-code reuse.
+An optional local 37-function catalog reports zero exact matches and four
+normalized soft-float candidates: `__extendsfdf2`, `__adddf3`, `__subdf3`,
+and `__negdf2`. They remain review evidence and do not drive generated-code
+reuse. Public generation does not require a catalog.
 
 ## MGA2-F-004 - Standalone boot contract
 

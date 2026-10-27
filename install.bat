@@ -65,20 +65,11 @@ goto :parse_arguments
 :arguments_ready
 if not defined ISO_PATH set "ISO_PATH=%SCRIPT_ROOT%Metal Gear Acid 2 (USA).iso"
 if not defined TOOLKIT_PATH if defined PSP_RECOMP_DIR set "TOOLKIT_PATH=%PSP_RECOMP_DIR%"
-if not defined TOOLKIT_PATH set "TOOLKIT_PATH=D:\Github\psp-recomp"
+if not defined TOOLKIT_PATH set "TOOLKIT_PATH=%SCRIPT_ROOT%..\psp-recomp"
 for %%I in ("%TOOLKIT_PATH%") do set "TOOLKIT_PATH=%%~fI"
 if not defined INSTALL_DIR set "INSTALL_DIR=%SCRIPT_ROOT%out\install\%PRESET%"
 
-if not defined PSP_RECOMP_CODEGEN_CACHE if not defined LOCALAPPDATA (
-    echo ERROR: LOCALAPPDATA is not set. Set PSP_RECOMP_CODEGEN_CACHE explicitly.
-    goto :exit
-)
-if not defined PSP_RECOMP_FUNCTION_CATALOG if not defined LOCALAPPDATA (
-    echo ERROR: LOCALAPPDATA is not set. Set PSP_RECOMP_FUNCTION_CATALOG explicitly.
-    goto :exit
-)
-if not defined PSP_RECOMP_CODEGEN_CACHE set "PSP_RECOMP_CODEGEN_CACHE=%LOCALAPPDATA%\psp-recomp\codegen-cache"
-if not defined PSP_RECOMP_FUNCTION_CATALOG set "PSP_RECOMP_FUNCTION_CATALOG=%LOCALAPPDATA%\psp-recomp\function-catalog\catalog.toml"
+if not defined PSP_RECOMP_CODEGEN_CACHE if defined LOCALAPPDATA set "PSP_RECOMP_CODEGEN_CACHE=%LOCALAPPDATA%\psp-recomp\codegen-cache"
 set "PSP_RECOMP_DIR=%TOOLKIT_PATH%"
 
 pushd "%SCRIPT_ROOT%" >nul
@@ -116,39 +107,24 @@ goto :exit
 
 :runtime_ready
 if exist "%TOOLKIT_PATH%\src\rt\display_state.c" goto :display_state_ready
-echo ERROR: Metal Gear Acid 2 requires psp-recomp commit 1d78cb1 or newer.
+echo ERROR: Metal Gear Acid 2 requires the psp-recomp commit pinned in config\mga2.toml.
 echo Missing: %TOOLKIT_PATH%\src\rt\display_state.c
 goto :exit
 
 :display_state_ready
 if "%SOFTWARE_ONLY%"=="1" goto :toolkit_ready
 if exist "%TOOLKIT_PATH%\src\rt\texture_scaler.cpp" goto :texture_scaler_ready
-echo ERROR: Hardware rendering requires psp-recomp commit 1d78cb1 or newer.
+echo ERROR: Hardware rendering requires the psp-recomp commit pinned in config\mga2.toml.
 echo Missing: %TOOLKIT_PATH%\src\rt\texture_scaler.cpp
 goto :exit
 
 :texture_scaler_ready
 if exist "%TOOLKIT_PATH%\third_party\xbrz\xbrz.cpp" goto :toolkit_ready
-echo ERROR: Hardware rendering requires psp-recomp commit 1d78cb1 or newer.
+echo ERROR: Hardware rendering requires the psp-recomp commit pinned in config\mga2.toml.
 echo Missing: %TOOLKIT_PATH%\third_party\xbrz\xbrz.cpp
 goto :exit
 
 :toolkit_ready
-if exist "%PSP_RECOMP_CODEGEN_CACHE%" goto :codegen_cache_ready
-echo ERROR: The code-generation cache was not found:
-echo   %PSP_RECOMP_CODEGEN_CACHE%
-echo Set PSP_RECOMP_CODEGEN_CACHE to the cataloged cache directory.
-goto :exit
-
-:codegen_cache_ready
-if exist "%PSP_RECOMP_FUNCTION_CATALOG%" goto :function_catalog_ready
-echo ERROR: The function catalog was not found:
-echo   %PSP_RECOMP_FUNCTION_CATALOG%
-echo Set PSP_RECOMP_FUNCTION_CATALOG to catalog.toml.
-goto :exit
-
-:function_catalog_ready
-
 where /q python
 if errorlevel 1 (
     echo ERROR: Python 3.11 or newer was not found on PATH.
@@ -319,7 +295,7 @@ echo Options:
 echo   --iso PATH          Supported ULUS-10077 USA v1.00 ISO.
 echo                       Default: "Metal Gear Acid 2 (USA).iso" beside this script.
 echo   --toolkit PATH      psp-recomp checkout.
-echo                       Default: PSP_RECOMP_DIR or D:\Github\psp-recomp.
+echo                       Default: PSP_RECOMP_DIR or ..\psp-recomp.
 echo   --install-dir PATH  Runnable output directory.
 echo                       Default: out\install\clang-cl or clang-cl-software.
 echo   --software-only     Build the software reference renderer without Vulkan.

@@ -3,7 +3,7 @@
 [runtime]
 repository = "https://github.com/Tzeentchnet/psp-recomp.git"
 branch = "main"
-commit = "dca4a7cad3696259483a691ced11fc2499489e99"
+commit = "b56ff30ef5997b9f168209df8c33156e82402e7b"
 
 [reference]
 ppsspp_commit = "fa50bb1976065c4f8b1b47af227d367fe9771555"
@@ -95,6 +95,7 @@ module = "mgp_stage"
 sha1 = "a21def8fe88964caf4ddafeb10000301796fcc5e"
 base = 0x09a0b500
 symbol_prefix = "mga2_stage_title"
+overrides = "config/mga2_stage_title_overrides.toml"
 
 [[native_module]]
 file = "PSP_GAME/USRDIR/stage/tu0000/tu0000.prx"
