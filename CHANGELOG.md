@@ -12,12 +12,16 @@ All notable user-visible changes are documented here.
 - Optional D3D12 SMAA 1x High post-process anti-aliasing.
 - Optional startup shortcut that completes memory-stick/title initialization
   and transitions directly to the main menu.
+- Drag-and-drop installer input for supported ISO files and single-ISO ZIP
+  archives.
 - Controller configuration, secure savedata loading/import, audio, media HLE,
   fullscreen presentation, and deterministic benchmark tooling.
 - Public source checks that require no copyrighted game data.
 
 ### Changed
 
+- Installation now runs a consolidated prerequisite preflight and reports all
+  detected blockers before ISO extraction or build work begins.
 - Benchmark cases isolate memory sticks, record effective settings and input
   identities, and distinguish diagnostic runs from fixed-profile results.
 - Visual comparisons require a locally attested reference for scene-validation
@@ -36,8 +40,8 @@ All notable user-visible changes are documented here.
 - Some later scenes remain below the fixed-quality 60 FPS performance target.
 - Builds require a user-supplied, SHA-1-verified ULUS-10077 v1.00 ISO and the
   clean `psp-recomp` revision pinned in `config/mga2.toml`.
-- The installer requires an ASCII-only absolute ISO path; Unicode path support
-  is not yet validated end-to-end.
+- The installer requires an ASCII-only absolute ISO or ZIP source path; Unicode
+  path support is not yet validated end-to-end.
 - Historical gameplay, benchmark, and visual results have not been rerun with
   the stricter release-preparation checks.
 

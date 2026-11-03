@@ -189,7 +189,15 @@ integration are validated together.
 `install.bat` verifies the source requirements, initializes the Visual Studio
 x64 environment, verifies and extracts the user-owned ISO, generates the
 native code, builds the project, and stages a runnable installation. It checks
-prerequisites but does not install system software or copy the ISO.
+prerequisites but does not install system software or copy the ISO into the
+installation.
+
+After the ISO or ZIP is selected, the installer runs a consolidated preflight
+before extracting or building anything. It reports every detected blocker,
+including missing or outdated build tools, Visual Studio and SDK components,
+an incomplete or unsupported toolkit, invalid configured paths, and
+renderer-specific requirements. Resolve each reported `ERROR`, then rerun the
+installer.
 
 Place the supported ISO beside the script under its default name, then run
 from Command Prompt or double-click:
@@ -197,6 +205,12 @@ from Command Prompt or double-click:
 ```bat
 install.bat
 ```
+
+You can also drag and drop the supported ISO, or a ZIP containing exactly one
+ISO, onto `install.bat`. A dropped path is treated as the installation source.
+ZIP inputs are extracted beside the archive and the extracted ISO is retained
+because the game needs it at runtime. The installer reuses a matching extracted
+ISO on later runs and never overwrites a conflicting file.
 
 The default hardware build is staged in `out\install\clang-cl`. After
 installation, start the game from the project root with:
@@ -213,6 +227,7 @@ an isolated `memstick` directory inside the installation.
 Paths and the renderer set can be overridden:
 
 ```bat
+install.bat "E:\Games\Metal Gear Acid 2 (USA).zip"
 install.bat --iso "E:\Games\Metal Gear Acid 2 (USA).iso"
 install.bat --toolkit "E:\Source\psp-recomp"
 install.bat --install-dir "%LOCALAPPDATA%\Programs\Metal Gear Acid 2"
@@ -226,12 +241,13 @@ and function catalog are optional. Run `install.bat --help` for the complete
 option summary.
 
 > [!IMPORTANT]
-> The installer currently requires an **ASCII-only absolute ISO path**.
-> Non-ASCII paths cannot be handled reliably by the Windows launcher and the
-> runtime's narrow-character file APIs; the installer rejects them before
-> extraction. Move the ISO to a path such as `C:\Games\MGA2.iso`. Full Unicode
-> support for project, toolkit, installation, and memory-stick paths has not
-> been validated either.
+> The installer currently requires an **ASCII-only absolute ISO path**. ZIP
+> inputs must also use an ASCII-only path because the extracted ISO is placed
+> beside them. Non-ASCII paths cannot be handled reliably by the Windows
+> launcher and the runtime's narrow-character file APIs; the installer rejects
+> them before extraction. Move the ISO or ZIP to a path such as
+> `C:\Games\MGA2.iso`. Full Unicode support for project, toolkit, installation,
+> and memory-stick paths has not been validated either.
 
 The toolkit revision and clean working tree are checked before generation and
 again when configuring and building. For deliberate development with a
