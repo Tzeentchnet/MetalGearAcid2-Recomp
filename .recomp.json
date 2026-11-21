@@ -1,0 +1,32 @@
+{
+  "$schema": "https://recomp.fyi/schema/v1.json",
+  "game": "Metal Gear Acid 2",
+  "system": "PSP",
+  "type": "recomp",
+  "original": {
+    "region": "USA",
+    "revision": "1.00",
+    "serial": "ULUS-10077",
+    "sha1": "87cebe80a93c4231bdbab26ad630c6d8e2fddab5"
+  },
+  "project": "Metal Gear Acid 2 Recomp",
+  "status": "in-progress",
+  "targets": [
+    "Windows"
+  ],
+  "toolchain": "psp-recomp",
+  "approach": "Static recompilation of PSP Allegrex code with a native HLE runtime and D3D12, Vulkan, or software rendering.",
+  "maintainers": [
+    {
+      "name": "Tzeentchnet",
+      "link": "https://github.com/Tzeentchnet"
+    }
+  ],
+  "links": [
+    {
+      "label": "Validation status",
+      "url": "https://github.com/Tzeentchnet/MetalGearAcid2-Recomp/blob/main/docs/STATUS.md"
+    }
+  ],
+  "notes": "Native execution reaches the opening tutorial, later Stage 01 content, and Arena gameplay; full-game compatibility, save writing, media, and soak validation remain open."
+}
