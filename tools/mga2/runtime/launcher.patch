@@ -226,6 +226,48 @@ diff --git a/src/rt/input_config.c b/src/rt/input_config.c
  }
  
  static int write_binding(
+diff --git a/src/rt/input_settings.c b/src/rt/input_settings.c
+--- a/src/rt/input_settings.c
++++ b/src/rt/input_settings.c
+@@ -7,6 +7,7 @@
+ 
+ #include <stdarg.h>
+ #include <stdio.h>
++#include <stdlib.h>
+ #include <string.h>
+ #include <windows.h>
+ 
+@@ -153,6 +154,19 @@ static void set_binding_text(
+ }
+ #endif
+ 
++/* Examples in the names of the controller RecompLauncher reports. */
++static const char *gamepad_examples(void) {
++    const char *pad = getenv("RECOMPLAUNCHER_PAD");
++    if (pad && _stricmp(pad, "xbox") == 0)
++        return "Examples: rt, lb, x, a. Generic names such as right_trigger "
++               "also work; all are documented in input.ini.";
++    if (pad && _stricmp(pad, "playstation") == 0)
++        return "Examples: r2, l1, square, cross. Generic names such as "
++               "right_trigger also work; all are documented in input.ini.";
++    return "Examples: right_trigger, left_shoulder, west, south. "
++           "All valid names remain documented in input.ini.";
++}
++
+ static INT_PTR CALLBACK input_dialog_proc(
+     HWND dialog, UINT message, WPARAM wparam, LPARAM lparam) {
+     InputDialogContext *context =
+@@ -226,9 +240,7 @@ static INT_PTR CALLBACK input_dialog_proc(
+         }
+ 
+         add_control(
+-            dialog, 0, "STATIC",
+-            "Examples: right_trigger, left_shoulder, west, south. "
+-            "All valid names remain documented in input.ini.",
++            dialog, 0, "STATIC", gamepad_examples(),
+             0, 16, GAMEPAD_EXAMPLES_Y, 568, 34, 0);
+         add_control(
+             dialog, 0, "BUTTON", "Save",
 diff --git a/src/rt/window_mode.h b/src/rt/window_mode.h
 new file mode 100644
 --- /dev/null
