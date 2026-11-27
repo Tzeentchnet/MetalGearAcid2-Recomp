@@ -23,6 +23,11 @@ the exact supported ISO before extracting or generating anything locally.
   savedata loading/import, and deterministic validation tools.
 - Public build defaults use a sibling `psp-recomp` checkout and no longer
   require a private function catalog or pre-populated code-generation cache.
+- ISO, CSO and CHD disc images; a CSO or CHD is converted once to an ISO.
+- RecompLauncher support: pick your disc, press Set Up to build, and play,
+  with the graphics settings on the game's page. Big Picture mode starts full
+  screen, and the controller window names buttons for Xbox or PlayStation
+  controllers.
 
 ## Validated scope
 
@@ -43,7 +48,7 @@ not yet been rerun with the stricter release-preparation checks.
 - Secure save creation and reload have not been validated.
 - Full gameplay, all media paths, and long soak runs have not been completed.
 - Arena and some later scenes remain below the fixed-quality 60 FPS target.
-- Only the USA v1.00 ISO with the documented SHA-1 is supported.
+- Only the USA v1.00 disc with the documented SHA-1 is supported.
 - The installer requires an ASCII-only absolute ISO path; full Unicode path
   handling remains unvalidated.
 - Windows 10/11 x64 and a clean checkout of the exact runtime revision in
