@@ -1,0 +1,107 @@
+diff --git a/src/rt/startup_check.c b/src/rt/startup_check.c
+--- a/src/rt/startup_check.c
++++ b/src/rt/startup_check.c
+@@ -3,6 +3,7 @@
+ #endif
+ 
+ #include "startup_check.h"
++#include "settings_path.h"
+ 
+ #include <windows.h>
+ #include <bcrypt.h>
+@@ -110,6 +111,70 @@ done:
+     return ok;
+ }
+ 
++/* A verified ISO is remembered in iso-check.txt beside the other settings,
++ * keyed on its volume, file ID, size and last write time, so later starts
++ * skip hashing the whole disc. Replacing or editing the file changes the
++ * key; SR_ISO_VERIFY=full always hashes it. */
++#define SR_ISO_CHECK_FILE "iso-check.txt"
++
++static int iso_identity(
++    HANDLE file, const char *path, char *identity, size_t identity_size) {
++    BY_HANDLE_FILE_INFORMATION info;
++    int length;
++    if (!GetFileInformationByHandle(file, &info)) return 0;
++    length = snprintf(
++        identity, identity_size,
++        "v1 %s %08lx %08lx%08lx %08lx%08lx %08lx%08lx\n%s\n",
++        SR_EXPECTED_ISO_SHA1,
++        (unsigned long)info.dwVolumeSerialNumber,
++        (unsigned long)info.nFileIndexHigh, (unsigned long)info.nFileIndexLow,
++        (unsigned long)info.nFileSizeHigh, (unsigned long)info.nFileSizeLow,
++        (unsigned long)info.ftLastWriteTime.dwHighDateTime,
++        (unsigned long)info.ftLastWriteTime.dwLowDateTime,
++        path);
++    return length > 0 && (size_t)length < identity_size;
++}
++
++static int iso_check_path(char *path, size_t path_size) {
++    char error[256];
++    return sr_settings_path(
++        SR_ISO_CHECK_FILE, path, path_size, error, sizeof(error));
++}
++
++static int iso_check_cached(const char *identity) {
++    char path[1100];
++    char cached[1400];
++    size_t length;
++    FILE *file;
++    const char *mode = getenv("SR_ISO_VERIFY");
++    if (mode && _stricmp(mode, "full") == 0) return 0;
++    if (!iso_check_path(path, sizeof(path))) return 0;
++    file = fopen(path, "rb");
++    if (!file) return 0;
++    length = fread(cached, 1, sizeof(cached) - 1, file);
++    fclose(file);
++    cached[length] = 0;
++    return strcmp(cached, identity) == 0;
++}
++
++static void iso_check_remember(const char *identity) {
++    char path[1100];
++    char temporary[1110];
++    FILE *file;
++    int ok;
++    if (!iso_check_path(path, sizeof(path))) return;
++    snprintf(temporary, sizeof(temporary), "%s.tmp", path);
++    file = fopen(temporary, "wb");
++    if (!file) return;
++    ok = fputs(identity, file) >= 0;
++    if (fclose(file) != 0) ok = 0;
++    if (!ok || !MoveFileExA(temporary, path, MOVEFILE_REPLACE_EXISTING)) {
++        DeleteFileA(temporary);
++        fprintf(stderr, "%s startup: cannot write %s; the disc will be "
++                "checked again next time.\n", SR_GAME_TITLE, path);
++    }
++}
++
+ int sr_startup_validate(void) {
+     const char *path = getenv("PSP_ISO");
+     if (!path || !path[0]) {
+@@ -150,6 +215,16 @@ int sr_startup_validate(void) {
+         return 0;
+     }
+ 
++    char identity[1400];
++    int have_identity = iso_identity(file, path, identity, sizeof(identity));
++    if (have_identity && iso_check_cached(identity)) {
++        CloseHandle(file);
++        fprintf(
++            stderr, "%s startup: verified PSP_ISO (%s, unchanged since its "
++            "last full check).\n", SR_GAME_TITLE, SR_EXPECTED_ISO_SHA1);
++        return 1;
++    }
++
+     uint8_t hash[20];
+     char error[256];
+     if (!hash_file_sha1(file, hash, error, sizeof(error))) {
+@@ -175,6 +250,7 @@ int sr_startup_validate(void) {
+     fprintf(
+         stderr, "%s startup: verified PSP_ISO (%s).\n",
+         SR_GAME_TITLE, actual);
++    if (have_identity) iso_check_remember(identity);
+     return 1;
+ }
+ 

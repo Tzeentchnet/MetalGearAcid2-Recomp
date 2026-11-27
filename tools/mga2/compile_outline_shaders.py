@@ -49,7 +49,8 @@ def main(argv: list[str]) -> int:
         identify_toolkit(args.toolkit, config["runtime"]["commit"])
         verify(
             args.overlay,
-            [ASSETS / "outline.patch", ASSETS / "cards.patch", ASSETS / "launcher.patch"],
+            [ASSETS / "outline.patch", ASSETS / "cards.patch", ASSETS / "launcher.patch",
+             ASSETS / "startup.patch"],
             ASSETS,
         )
         d3d = runpy.run_path(str(args.toolkit / "tools" / "compile_d3d12_shaders.py"))
