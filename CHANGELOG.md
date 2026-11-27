@@ -17,6 +17,9 @@ All notable user-visible changes are documented here.
 - Controller configuration, secure savedata loading/import, audio, media HLE,
   fullscreen presentation, and deterministic benchmark tooling.
 - Public source checks that require no copyrighted game data.
+- RecompLauncher support: `recomplauncher.json`, windowless `play.bat
+  --prepare` and `--play` modes, `mga2.exe --play` to start without the setup
+  windows, and a tag-triggered workflow that drafts the source release zip.
 
 ### Changed
 

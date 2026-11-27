@@ -1,2 +1,6 @@
 # Unified-diff context lines can consist of a single leading space.
 tools/mga2/runtime/*.patch whitespace=-blank-at-eol
+
+# cmd.exe needs CRLF batch files, also in release archives built on Linux.
+*.bat text eol=crlf
+*.cmd text eol=crlf

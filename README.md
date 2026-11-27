@@ -1,5 +1,7 @@
 # Metal Gear Acid 2 Recomp
 
+<a href="https://recomplauncher.com"><picture><source media="(prefers-color-scheme: dark)" srcset="https://recomplauncher.com/assets/press/launcher/badge-light.svg"><img alt="Get it on RecompLauncher" src="https://recomplauncher.com/assets/press/launcher/badge-dark.svg" height="48"></picture></a>
+
 Source-only Windows static recompilation work for **Metal Gear Acid 2
 (ULUS-10077 v1.00)** using the public
 [`psp-recomp`](https://github.com/Tzeentchnet/psp-recomp) toolkit.
@@ -255,6 +257,33 @@ modified, unpinned, or non-Git toolkit, pass `--allow-unsupported-toolkit` to
 `install.bat` to enable an explicitly unsupported build. Its toolkit source
 identity is recorded, and changing its source, tool, or asset trees requires
 regeneration. This override is not a validated release configuration.
+
+## RecompLauncher
+
+[RecompLauncher](https://recomplauncher.com) can set the game up and start
+it for you, using [`recomplauncher.json`](recomplauncher.json). Install the
+recomp, pick your USA ISO, and press Set Up: it runs the same build as
+`install.bat`, so the requirements above still apply, and it checks out the
+pinned `psp-recomp` revision into `.deps\psp-recomp` inside the game's folder.
+Keep the ISO where it is, because the game reads it while you play.
+
+The graphics settings appear on the game's page. Under the launcher, settings,
+the memory stick, the code-generation cache and logs are kept in the game's
+`recompdata` folder instead of beside `mga2.exe`, so card replacement PNGs go
+in `recompdata\mods\cards`. To remap the controller, set **Setup windows** to
+**Show before playing**.
+
+Launchers use two opt-in `play.bat` modes, which print errors and progress
+instead of opening windows:
+
+```bat
+play.bat --prepare --game "C:\Games\Metal Gear Acid 2 (USA).iso" --data "C:\Games\MGA2\recompdata"
+play.bat --play --game "C:\Games\Metal Gear Acid 2 (USA).iso" --data "C:\Games\MGA2\recompdata"
+```
+
+`--play` starts `mga2.exe --play`, which uses the saved settings without the
+graphics and controller windows. `play.bat` without these options behaves as
+before.
 
 ## Manual development
 

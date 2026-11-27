@@ -1,0 +1,49 @@
+name: Release
+
+# Pushing a version tag (v0.1.0) drafts a GitHub release with the source zip
+# that RecompLauncher installs. The zip holds only tracked files: no disc
+# contents, generated code or build products. Players build the game from
+# their own disc during setup. Review and publish the draft by hand.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Reject protected release contents and history
+        run: python3 tools/mga2/check_release_contents.py
+
+      - name: Package
+        run: |
+          asset="MetalGearAcid2-Recomp-${GITHUB_REF_NAME}-Windows-x64.zip"
+          git archive --format=zip -o "$asset" HEAD
+          # The launcher reads recomplauncher.json from the top of the zip, and
+          # cmd.exe needs CRLF batch files (.gitattributes converts them).
+          python3 - "$asset" <<'EOF'
+          import json, sys, zipfile
+          with zipfile.ZipFile(sys.argv[1]) as archive:
+              json.loads(archive.read("recomplauncher.json"))
+              for name in archive.namelist():
+                  if name.lower().endswith((".bat", ".cmd")):
+                      batch = archive.read(name)
+                      assert b"\n" not in batch.replace(b"\r\n", b""), f"{name} is not CRLF"
+          EOF
+          echo "ASSET=$asset" >> "$GITHUB_ENV"
+
+      - name: Draft the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >
+          gh release create "$GITHUB_REF_NAME" "$ASSET"
+          --draft --verify-tag --generate-notes
+          --title "Metal Gear Acid 2 Recomp $GITHUB_REF_NAME"

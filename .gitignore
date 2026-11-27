@@ -25,6 +25,9 @@
 # Generated recompilation, native build output, and protected evidence.
 /build/
 /out/
+/.deps/
+/recompdata/
+/.recomplauncher-tmp/
 /memstick/
 *.trace
 *.log

@@ -1,0 +1,155 @@
+{
+  "$schema": "https://recomplauncher.com/schema/recomplauncher.json",
+  "format": 1,
+  "name": "Metal Gear Acid 2",
+  "repo": "Tzeentchnet/MetalGearAcid2-Recomp",
+  "inputs": [
+    {
+      "id": "game",
+      "label": "Your disc image (.iso) of the USA release, ULUS-10077 v1.00. Keep it where it is: the game reads it while you play. Setting up builds the game on your PC: it needs Python 3.11+, Git, CMake, Ninja, Visual Studio 2022 Build Tools with clang-cl, and the Vulkan SDK, and takes a while.",
+      "formats": [{ "type": "file", "extensions": ["iso"] }],
+      "check": { "iso9660": "UMD_DATA.BIN" },
+      "dumps": [
+        { "name": "USA v1.00", "size": 917307392, "crc32": "0c3ac8cd" }
+      ]
+    }
+  ],
+  "prepare": {
+    "program": ["play.bat"],
+    "args": ["--prepare", "--game", "{input:game}", "--data", "{data}"],
+    "label": "Building the game from your disc",
+    "done": [
+      "{install}/out/install/clang-cl/mga2.exe",
+      "{install}/out/install/clang-cl/mga2_image.bin"
+    ]
+  },
+  "start": {
+    "program": ["play.bat"],
+    "args": ["--play", "--game", "{input:game}", "--data", "{data}"]
+  },
+  "system": {
+    "windows": { "version": "10", "graphics": { "d3d12": "11_0" } }
+  },
+  "config": [
+    {
+      "id": "main",
+      "format": "ini",
+      "file": [{ "path": "{data}/graphics.ini" }],
+      "new": {
+        "renderer": "d3d12",
+        "internal_resolution": "2",
+        "texture_scale": "1",
+        "d3d12_full_rate": "0",
+        "anti_aliasing": "off",
+        "skip_startup": "off",
+        "outlines": "original"
+      }
+    }
+  ],
+  "saves": ["{data}/memstick/PSP/SAVEDATA"],
+  "folders": {
+    "saves": [{ "path": "{data}/memstick/PSP/SAVEDATA" }],
+    "logs": [{ "path": "{data}/logs" }],
+    "cache": [{ "path": "{data}/cache" }]
+  },
+  "exit_codes": {
+    "120": "The game hasn't been built yet. Press Set Up Again on the game's page.",
+    "121": "Your disc image couldn't be used: it was moved, it isn't the USA v1.00 release, or its path has letters other than plain English ones. Pick it again from a folder like C:\\Games.",
+    "122": "The game's folder path has letters other than plain English ones, which the game can't read yet. Move your library to a folder like C:\\Games."
+  },
+  "looks": {
+    "allowed": false,
+    "reason": "Metal Gear Acid 2 starts through a script, so the looks can't be added to it yet."
+  },
+  "groups": [{ "id": "Advanced", "advanced": true }],
+  "settings": [
+    {
+      "id": "renderer", "label": "Renderer", "group": "Graphics",
+      "help": "Direct3D 12 is recommended. Software draws at the PSP's own resolution, as a reference.",
+      "choices": [
+        { "label": "Direct3D 12", "set": { "renderer": "d3d12" } },
+        { "label": "Vulkan", "set": { "renderer": "vk" } },
+        { "label": "Automatic", "set": { "renderer": "auto" } },
+        { "label": "Software", "set": { "renderer": "sw" } }
+      ],
+      "defaults": { "renderer": "d3d12" }
+    },
+    {
+      "id": "internal_resolution", "label": "Resolution", "group": "Graphics",
+      "help": "What Direct3D 12 and Vulkan draw at. 1x is the PSP's own; start around 3x or 4x and go down if the game slows.",
+      "choices": [
+        { "label": "1x (480x272)", "set": { "internal_resolution": "1" } },
+        { "label": "2x (960x544)", "set": { "internal_resolution": "2" } },
+        { "label": "3x (1440x816)", "set": { "internal_resolution": "3" } },
+        { "label": "4x (1920x1088)", "set": { "internal_resolution": "4" } },
+        { "label": "5x (2400x1360)", "set": { "internal_resolution": "5" } },
+        { "label": "6x (2880x1632)", "set": { "internal_resolution": "6" } },
+        { "label": "7x (3360x1904)", "set": { "internal_resolution": "7" } },
+        { "label": "8x (3840x2176)", "set": { "internal_resolution": "8" } }
+      ],
+      "defaults": { "internal_resolution": "2" }
+    },
+    {
+      "id": "texture_scale", "label": "Texture scaling", "group": "Graphics",
+      "help": "Smooths the game's textures with xBRZ. Higher uses much more graphics memory.",
+      "choices": [
+        { "label": "Off", "set": { "texture_scale": "1" } },
+        { "label": "2x xBRZ", "set": { "texture_scale": "2" } },
+        { "label": "3x xBRZ", "set": { "texture_scale": "3" } },
+        { "label": "4x xBRZ", "set": { "texture_scale": "4" } },
+        { "label": "5x xBRZ", "set": { "texture_scale": "5" } }
+      ],
+      "defaults": { "texture_scale": "1" }
+    },
+    {
+      "id": "anti_aliasing", "label": "Anti-aliasing", "group": "Graphics",
+      "help": "Smooths edges. Direct3D 12 only.",
+      "choices": [
+        { "label": "Off", "set": { "anti_aliasing": "off" } },
+        { "label": "SMAA 1x High", "set": { "anti_aliasing": "smaa" } }
+      ],
+      "defaults": { "anti_aliasing": "off", "renderer": "d3d12" },
+      "when": { "renderer": "d3d12" }
+    },
+    {
+      "id": "d3d12_full_rate", "label": "Shading", "group": "Graphics",
+      "help": "Balanced shades less where it can on cards that support it. Full resolution looks best, for 4K and screenshots.",
+      "choices": [
+        { "label": "Balanced", "set": { "d3d12_full_rate": "0" } },
+        { "label": "Full resolution", "set": { "d3d12_full_rate": "1" } }
+      ],
+      "defaults": { "d3d12_full_rate": "0", "renderer": "d3d12" },
+      "when": { "renderer": "d3d12" }
+    },
+    {
+      "id": "outlines", "label": "Character outlines", "group": "Graphics",
+      "help": "Sharper draws outlines at the full resolution (Direct3D 12 or Vulkan, above 1x). Off hides them.",
+      "choices": [
+        { "label": "Original", "set": { "outlines": "original" } },
+        { "label": "Sharper", "set": { "outlines": "sharper" } },
+        { "label": "Off", "set": { "outlines": "off" } }
+      ],
+      "defaults": { "outlines": "original" }
+    },
+    {
+      "id": "skip_startup", "label": "Startup", "group": "Game",
+      "help": "Skipping runs the logos at turbo speed and presses START for you. They may flash by.",
+      "choices": [
+        { "label": "Play the logos", "set": { "skip_startup": "off" } },
+        { "label": "Skip to the main menu", "set": { "skip_startup": "on" } }
+      ],
+      "defaults": { "skip_startup": "off" }
+    },
+    {
+      "id": "setup_windows", "label": "Setup windows", "group": "Advanced", "in": "args",
+      "help": "The game's own graphics and controller windows. Show them to remap your controller; Play Game there starts the game.",
+      "choices": [
+        { "label": "Skip them", "args": [] },
+        { "label": "Show before playing", "args": ["--show-setup"] }
+      ]
+    }
+  ],
+  "actions": [
+    { "id": "logs", "label": "Logs", "help": "The game's output from the last few sessions.", "open": "logs" }
+  ]
+}
