@@ -11,6 +11,7 @@ import zipfile
 
 TOOLS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(TOOLS))
+sys.path.insert(0, str(TOOLS / "tests"))
 
 import prepare_iso
 
