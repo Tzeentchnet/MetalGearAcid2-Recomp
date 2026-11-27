@@ -20,6 +20,10 @@ All notable user-visible changes are documented here.
 - RecompLauncher support: `recomplauncher.json`, windowless `play.bat
   --prepare` and `--play` modes, `mga2.exe --play` to start without the setup
   windows, and a tag-triggered workflow that drafts the source release zip.
+- CSO and CHD disc images, converted once to an ISO during installation.
+- Full screen at startup in RecompLauncher's Big Picture mode, with a Window
+  setting to choose, and controller-window button names for Xbox or
+  PlayStation controllers; either spelling is accepted.
 
 ### Changed
 

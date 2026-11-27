@@ -6,9 +6,8 @@
   "inputs": [
     {
       "id": "game",
-      "label": "Your disc image (.iso) of the USA release, ULUS-10077 v1.00. Keep it where it is: the game reads it while you play. Setting up builds the game on your PC: it needs Python 3.11+, Git, CMake, Ninja, Visual Studio 2022 Build Tools with clang-cl, and the Vulkan SDK, and takes a while.",
-      "formats": [{ "type": "file", "extensions": ["iso"] }],
-      "check": { "iso9660": "UMD_DATA.BIN" },
+      "label": "Your disc image (.iso, .cso or .chd) of the USA release, ULUS-10077 v1.00. Keep an .iso where it is: the game reads it while you play. A .cso or .chd is unpacked once into the game's folder. Setting up builds the game on your PC: it needs Python 3.11+, Git, CMake, Ninja, Visual Studio 2022 Build Tools with clang-cl, and the Vulkan SDK, and takes a while.",
+      "formats": [{ "type": "file", "extensions": ["iso", "cso", "chd"] }],
       "dumps": [
         { "name": "USA v1.00", "size": 917307392, "crc32": "0c3ac8cd" }
       ]
@@ -63,6 +62,15 @@
   },
   "groups": [{ "id": "Advanced", "advanced": true }],
   "settings": [
+    {
+      "id": "window", "label": "Window", "group": "Display", "in": "args",
+      "help": "Big Picture mode starts full screen. F11 switches while you play (Direct3D 12 and Vulkan).",
+      "choices": [
+        { "label": "Full screen in Big Picture", "args": [] },
+        { "label": "Always full screen", "args": ["--fullscreen"] },
+        { "label": "Always windowed", "args": ["--windowed"] }
+      ]
+    },
     {
       "id": "renderer", "label": "Renderer", "group": "Graphics",
       "help": "Direct3D 12 is recommended. Software draws at the PSP's own resolution, as a reference.",
@@ -142,7 +150,7 @@
     },
     {
       "id": "setup_windows", "label": "Setup windows", "group": "Advanced", "in": "args",
-      "help": "The game's own graphics and controller windows. Show them to remap your controller; Play Game there starts the game.",
+      "help": "The game's own graphics and controller windows. Show them to remap your controller: buttons are named for the controller you have. Play Game there starts the game.",
       "choices": [
         { "label": "Skip them", "args": [] },
         { "label": "Show before playing", "args": ["--show-setup"] }

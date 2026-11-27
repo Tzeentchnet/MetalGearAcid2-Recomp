@@ -7,7 +7,7 @@ Source-only Windows static recompilation work for **Metal Gear Acid 2
 [`psp-recomp`](https://github.com/Tzeentchnet/psp-recomp) toolkit.
 
 No game executable, generated game C, disc data, trace, save, or capture should
-be committed. Supply your own supported USA ISO.
+be committed. Supply your own supported USA disc image as an ISO, CSO or CHD.
 
 > [!WARNING]
 > **This is a testing and evaluation release, and I do not make a full-game compatibility claim.** 
@@ -214,6 +214,11 @@ ZIP inputs are extracted beside the archive and the extracted ISO is retained
 because the game needs it at runtime. The installer reuses a matching extracted
 ISO on later runs and never overwrites a conflicting file.
 
+A CSO or a CHD made with `chdman createdvd` is converted once to an ISO in
+`build\mga2\iso`, which the game then reads; later runs reuse it while the
+source file is unchanged. CHDs compressed with zstd need Python 3.14 or the
+`zstandard` package.
+
 The default hardware build is staged in `out\install\clang-cl`. After
 installation, start the game from the project root with:
 
@@ -262,16 +267,22 @@ regeneration. This override is not a validated release configuration.
 
 [RecompLauncher](https://recomplauncher.com) can set the game up and start
 it for you, using [`recomplauncher.json`](recomplauncher.json). Install the
-recomp, pick your USA ISO, and press Set Up: it runs the same build as
+recomp, pick your USA ISO, CSO or CHD, and press Set Up: it runs the same build as
 `install.bat`, so the requirements above still apply, and it checks out the
 pinned `psp-recomp` revision into `.deps\psp-recomp` inside the game's folder.
-Keep the ISO where it is, because the game reads it while you play.
+Keep an ISO where it is, because the game reads it while you play; a CSO or
+CHD is converted once into the game's folder.
 
 The graphics settings appear on the game's page. Under the launcher, settings,
 the memory stick, the code-generation cache and logs are kept in the game's
 `recompdata` folder instead of beside `mga2.exe`, so card replacement PNGs go
 in `recompdata\mods\cards`. To remap the controller, set **Setup windows** to
-**Show before playing**.
+**Show before playing**; the controller window names buttons for the
+controller the launcher reports (`a`, `lb`, `menu` or `cross`, `l1`,
+`options`), and accepts either spelling.
+
+In Big Picture mode the D3D12 and Vulkan renderers start full screen. The
+**Window** setting can make that always or never, and F11 still switches.
 
 Launchers use two opt-in `play.bat` modes, which print errors and progress
 instead of opening windows:
@@ -282,7 +293,9 @@ play.bat --play --game "C:\Games\Metal Gear Acid 2 (USA).iso" --data "C:\Games\M
 ```
 
 `--play` starts `mga2.exe --play`, which uses the saved settings without the
-graphics and controller windows. `play.bat` without these options behaves as
+graphics and controller windows. `--fullscreen` or `--windowed` sets the
+starting window mode (`SR_FULLSCREEN`); otherwise `RECOMPLAUNCHER_MODE=bigpicture`
+starts full screen. `play.bat` without these options behaves as
 before.
 
 ## Manual development
