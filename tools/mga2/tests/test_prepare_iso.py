@@ -43,7 +43,7 @@ class IsoPreparationTests(unittest.TestCase):
                     archive_path, expected_size=len(iso_bytes)
                 )
 
-            self.assertEqual(first, Path(temporary) / "game.iso")
+            self.assertEqual(first, (Path(temporary) / "game.iso").resolve())
             self.assertEqual(second, first)
             self.assertEqual(first.read_bytes(), iso_bytes)
 
