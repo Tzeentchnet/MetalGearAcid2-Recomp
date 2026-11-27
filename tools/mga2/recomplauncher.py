@@ -341,6 +341,11 @@ def play(args: argparse.Namespace, extra: list[str]) -> int:
     environment["PSP_ISO"] = str(iso)
     environment["SR_MEMSTICK"] = str(memstick)
     environment["SR_SETTINGS_DIR"] = str(data)
+    # SR_SETTINGS_DIR also moves where the runtime looks for its own files,
+    # so point those back at the installation and keep caches in cache.
+    environment["PSP_VFPU_TABLES"] = str(installation / "assets" / "vfpu")
+    environment["SR_FONTDIR"] = str(installation / "font")
+    environment["SR_D3D12_PSO_KEYS"] = str(data / "cache" / "pso_keys.bin")
     environment.setdefault("SR_MODULE_LOG", "1")
 
     mode = "--configure" if args.show_setup else "--play"
