@@ -2,7 +2,7 @@
 
 All notable user-visible changes are documented here.
 
-## [Unreleased]
+## [0.1.1] - 2026-11-27
 
 ### Changed
 
@@ -60,4 +60,5 @@ All notable user-visible changes are documented here.
 - Historical gameplay, benchmark, and visual results have not been rerun with
   the stricter release-preparation checks.
 
+[0.1.1]: https://github.com/Tzeentchnet/MetalGearAcid2-Recomp/releases/tag/v0.1.1
 [0.1.0]: https://github.com/Tzeentchnet/MetalGearAcid2-Recomp/releases/tag/v0.1.0
