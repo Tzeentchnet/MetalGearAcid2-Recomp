@@ -2,6 +2,14 @@
 
 All notable user-visible changes are documented here.
 
+## [Unreleased]
+
+### Changed
+
+- Startup remembers a verified ISO, so later starts no longer read the whole
+  disc image; replacing or modifying it, or `SR_ISO_VERIFY=full`, checks it
+  again.
+
 ## [0.1.0] - 2026-11-27
 
 ### Added

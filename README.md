@@ -231,6 +231,11 @@ falls back to the software-only installation or an existing developer build.
 The installed launcher records the verified ISO's original location and uses
 an isolated `memstick` directory inside the installation.
 
+The game checks the ISO's SHA-1 when it starts. After the first full check it
+remembers the result in `iso-check.txt` beside its settings, so later starts
+skip reading the whole disc until the ISO is replaced or modified. Set
+`SR_ISO_VERIFY=full` to check the whole file every time.
+
 Paths and the renderer set can be overridden:
 
 ```bat
