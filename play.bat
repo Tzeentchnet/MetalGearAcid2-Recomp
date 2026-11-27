@@ -4,6 +4,8 @@ setlocal EnableExtensions DisableDelayedExpansion
 set "SCRIPT_ROOT=%~dp0"
 set "ISO_OVERRIDE="
 if "%~1"=="" goto :find_installed_launcher
+if /I "%~1"=="--prepare" goto :headless
+if /I "%~1"=="--play" goto :headless
 set "ISO_OVERRIDE=%~f1"
 
 :find_installed_launcher
@@ -88,3 +90,15 @@ exit /b 1
 set "RESULT=%ERRORLEVEL%"
 popd >nul
 exit /b %RESULT%
+
+:headless
+rem --prepare or --play: set up or start the game without windows, for game
+rem launchers. See tools\mga2\recomplauncher.py.
+where /q python >nul 2>&1
+if not errorlevel 1 goto :headless_python_ready
+echo Missing: Python 3.11 or newer on PATH. Install it, then try again: https://www.python.org/downloads/
+exit /b 9009
+
+:headless_python_ready
+python "%SCRIPT_ROOT%tools\mga2\recomplauncher.py" %*
+exit /b %ERRORLEVEL%

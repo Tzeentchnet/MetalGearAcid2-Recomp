@@ -1,0 +1,52 @@
+diff --git a/src/rt/driver.c b/src/rt/driver.c
+index 6a43f28..f8f1fab 100644
+--- a/src/rt/driver.c
++++ b/src/rt/driver.c
+@@ -195,15 +195,30 @@ int main(int argc, char **argv) {
+                 SR_GAME_TITLE " Controller", 0);
+             return result < 0 ? 2 : 0;
+         }
+-        if (strcmp(argv[i], "--configure") == 0) {
++        if (strcmp(argv[i], "--configure") == 0 ||
++            strcmp(argv[i], "--play") == 0) {
+             int result;
+             if (!sr_graphics_config_init() || !sr_input_init()) return 2;
+-            result = sr_graphics_settings_show(
+-                SR_GAME_TITLE " Graphics");
+-            if (result <= 0) return result < 0 ? 2 : 0;
+-            result = sr_input_settings_show(
+-                SR_GAME_TITLE " Controller", 1);
+-            if (result < 0) return 2;
++            if (strcmp(argv[i], "--play") == 0) {
++                /* Start with the saved settings and no setup windows, for
++                 * launchers that show these settings themselves. */
++                if (sr_graphics_config_first_run()) {
++                    char error[512];
++                    if (!sr_graphics_config_save(
++                            sr_graphics_config_get(), error, sizeof(error))) {
++                        fprintf(stderr, "graphics: %s\n", error);
++                        return 2;
++                    }
++                }
++                result = SR_INPUT_SETTINGS_LAUNCH;
++            } else {
++                result = sr_graphics_settings_show(
++                    SR_GAME_TITLE " Graphics");
++                if (result <= 0) return result < 0 ? 2 : 0;
++                result = sr_input_settings_show(
++                    SR_GAME_TITLE " Controller", 1);
++                if (result < 0) return 2;
++            }
+             if (result != SR_INPUT_SETTINGS_LAUNCH) return 0;
+ #ifdef SR_CONFIG_BOOT_IMAGE
+             char image_path[MAX_PATH];
+@@ -281,7 +296,8 @@ int main(int argc, char **argv) {
+         fprintf(stderr, "usage: driver <elf> <ref-trace> <out-trace>\n"
+                         "       driver --image <image.bin> <base-hex> <entry-hex> <ref-trace> <out-trace>\n"
+                         "       driver --boot <image.bin> <base-hex> <entry-hex> <out-trace>\n"
+-                        "       driver --configure\n");
++                        "       driver --configure\n"
++                        "       driver --play\n");
+         return 2;
+     }
+     {

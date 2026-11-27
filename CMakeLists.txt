@@ -142,11 +142,13 @@ set(MGA2_RUNTIME_PREPARE
     --overlay "${MGA2_RUNTIME_OVERLAY}"
     --patch "${MGA2_RUNTIME_INPUTS}/outline.patch"
     --patch "${MGA2_RUNTIME_INPUTS}/cards.patch"
+    --patch "${MGA2_RUNTIME_INPUTS}/launcher.patch"
     --shaders "${MGA2_RUNTIME_INPUTS}")
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
   "${CMAKE_SOURCE_DIR}/tools/mga2/prepare_runtime.py"
   "${MGA2_RUNTIME_INPUTS}/outline.patch"
   "${MGA2_RUNTIME_INPUTS}/cards.patch"
+  "${MGA2_RUNTIME_INPUTS}/launcher.patch"
   "${MGA2_RUNTIME_INPUTS}/psp_ps.inc"
   "${MGA2_RUNTIME_INPUTS}/psp_ps_direct.inc"
   "${MGA2_RUNTIME_INPUTS}/psp_frag.inc")
