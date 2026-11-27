@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
-"""Resolve an ISO input, extracting a ZIP beside its archive when needed."""
+"""Resolve an ISO input, extracting a ZIP beside its archive when needed.
+
+A CSO or CHD image is converted once to an ISO in build/mga2/iso.
+"""
 
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path, PurePosixPath
 import shutil
 import sys
@@ -14,6 +18,10 @@ import zlib
 
 
 ROOT = Path(__file__).resolve().parents[2]
+CONVERTED_ISO = ROOT / "build" / "mga2" / "iso" / "Metal Gear Acid 2 (USA).iso"
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import discimage  # noqa: E402
 
 
 class IsoPreparationError(ValueError):
@@ -115,12 +123,77 @@ def prepare_zip(source: Path, expected_size: int) -> Path:
     return destination.resolve()
 
 
+def source_identity(source: Path) -> dict[str, object]:
+    status = source.stat()
+    return {
+        "path": str(source),
+        "size": status.st_size,
+        "mtime_ns": status.st_mtime_ns,
+    }
+
+
+def converted_iso(
+    source: Path, expected_size: int, destination: Path = CONVERTED_ISO
+) -> Path | None:
+    """Return the ISO already converted from source, if it is still current."""
+    marker = destination.with_name(destination.name + ".source.json")
+    try:
+        recorded = json.loads(marker.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if (
+        recorded == source_identity(source.resolve())
+        and destination.is_file()
+        and destination.stat().st_size == expected_size
+    ):
+        return destination
+    return None
+
+
+def prepare_compressed(
+    source: Path,
+    expected_size: int,
+    destination: Path = CONVERTED_ISO,
+    progress=None,
+) -> Path:
+    """Convert a CSO or CHD image to an ISO once and reuse it afterwards."""
+    source = source.resolve(strict=True)
+    reused = converted_iso(source, expected_size, destination)
+    if reused is not None:
+        print(f'Reusing the ISO converted from "{source.name}": "{reused}"')
+        return reused
+    marker = destination.with_name(destination.name + ".source.json")
+    marker.unlink(missing_ok=True)
+    print(f'Converting "{source}" to "{destination}"...')
+    try:
+        discimage.convert_to_iso(source, destination, progress)
+    except discimage.DiscImageError as error:
+        raise IsoPreparationError(str(error)) from error
+    size = destination.stat().st_size
+    if size != expected_size:
+        destination.unlink()
+        raise IsoPreparationError(
+            f"the converted image is {size} bytes, expected {expected_size}; "
+            "it is not the supported USA v1.00 disc"
+        )
+    marker.write_text(
+        json.dumps(source_identity(source)) + "\n", encoding="utf-8"
+    )
+    return destination
+
+
+def is_compressed(source: Path) -> bool:
+    return discimage.image_kind(source) != "iso"
+
+
 def prepare_iso(source: Path, expected_size: int) -> Path:
     source = source.resolve(strict=True)
     if not source.is_file():
         raise IsoPreparationError(f'ISO input is not a file: "{source}"')
     if source.suffix.lower() == ".zip":
         return prepare_zip(source, expected_size)
+    if is_compressed(source):
+        return prepare_compressed(source, expected_size)
     if not str(source).isascii():
         raise IsoPreparationError(
             "the ISO path must use ASCII characters; "

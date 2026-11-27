@@ -106,5 +106,49 @@ class IsoPreparationTests(unittest.TestCase):
             self.assertFalse((root / "game.iso").exists())
 
 
+
+class CompressedImageTests(unittest.TestCase):
+    def test_cso_is_converted_once_and_reused_until_it_changes(self) -> None:
+        from test_discimage import sample_image, write_cso
+
+        data = sample_image()
+        with tempfile.TemporaryDirectory() as temporary:
+            source = Path(temporary) / "game.cso"
+            write_cso(source, data)
+            destination = Path(temporary) / "build" / "game.iso"
+            self.assertTrue(prepare_iso.is_compressed(source))
+
+            with redirect_stdout(StringIO()):
+                first = prepare_iso.prepare_compressed(
+                    source, len(data), destination)
+            self.assertEqual(first.read_bytes(), data)
+            self.assertEqual(
+                prepare_iso.converted_iso(source, len(data), destination),
+                destination)
+
+            output = StringIO()
+            with redirect_stdout(output):
+                prepare_iso.prepare_compressed(source, len(data), destination)
+            self.assertIn("Reusing", output.getvalue())
+
+            write_cso(source, data, block_size=4096)
+            self.assertIsNone(
+                prepare_iso.converted_iso(source, len(data), destination))
+
+    def test_wrong_size_conversion_is_refused_and_removed(self) -> None:
+        from test_discimage import sample_image, write_cso
+
+        data = sample_image()
+        with tempfile.TemporaryDirectory() as temporary:
+            source = Path(temporary) / "game.cso"
+            write_cso(source, data)
+            destination = Path(temporary) / "game.iso"
+            with redirect_stdout(StringIO()), self.assertRaises(
+                    prepare_iso.IsoPreparationError):
+                prepare_iso.prepare_compressed(
+                    source, len(data) + 1, destination)
+            self.assertFalse(destination.exists())
+
+
 if __name__ == "__main__":
     unittest.main()

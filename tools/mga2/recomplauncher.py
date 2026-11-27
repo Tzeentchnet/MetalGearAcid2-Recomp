@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 """Set up or start Metal Gear Acid 2 without windows, for game launchers.
 
-play.bat --prepare --game ISO [--data DIR]
-    Fetch the pinned psp-recomp toolkit, then build and install the game with
-    install.bat, printing "progress <0..1> <text>" lines as it goes.
-play.bat --play --game ISO --data DIR [--show-setup]
+play.bat --prepare --game IMAGE [--data DIR]
+    Convert a CSO or CHD image to an ISO once, fetch the pinned psp-recomp
+    toolkit, then build and install the game with install.bat, printing
+    "progress <0..1> <text>" lines as it goes.
+play.bat --play --game IMAGE --data DIR [--show-setup] [--fullscreen|--windowed]
     Start the installed game with its settings, memory stick and logs in DIR.
+    The window starts full screen in RecompLauncher's Big Picture mode unless
+    --fullscreen or --windowed says otherwise.
 
 Without --prepare or --play, play.bat behaves exactly as before.
 """
@@ -22,6 +25,8 @@ import shutil
 import subprocess
 import sys
 import tomllib
+
+import prepare_iso
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -258,7 +263,7 @@ def prepare(args: argparse.Namespace) -> int:
     preset = PRESETS[0]
     progress(0.01, "Checking your disc image")
     require_ascii(ROOT, "The game's folder", 2)
-    iso = check_iso(args.game, int(config["disc"]["iso_size"]), 2)
+    iso = unpack_image(args.game, int(config["disc"]["iso_size"]))
 
     if is_current_build(preset):
         progress(1, "Already built")
@@ -292,6 +297,46 @@ def prepare(args: argparse.Namespace) -> int:
     )
     progress(1, "Ready to play")
     return 0
+
+
+def unpack_image(source: Path, expected_size: int) -> Path:
+    """Return the ISO to build from, converting a CSO or CHD image once."""
+    source = source.absolute()
+    if not source.is_file():
+        raise LauncherError(f"The disc image was not found: {source}", 2)
+    if not prepare_iso.is_compressed(source):
+        return check_iso(source, expected_size, 2)
+    reported = [-1]
+
+    def report(done: int, total: int) -> None:
+        percent = done * 100 // max(total, 1)
+        if percent != reported[0]:
+            reported[0] = percent
+            progress(0.01 + 0.01 * percent / 100,
+                     f"Unpacking your disc image ({percent}%)")
+
+    try:
+        iso = prepare_iso.prepare_compressed(
+            source, expected_size, prepare_iso.CONVERTED_ISO, report
+        )
+    except ValueError as error:
+        raise LauncherError(f"Your disc image couldn't be unpacked: {error}", 2)
+    return check_iso(iso, expected_size, 2)
+
+
+def playable_iso(source: Path, expected_size: int) -> Path:
+    """Return the ISO the game reads: the image itself, or its converted ISO."""
+    source = source.absolute()
+    if source.is_file() and prepare_iso.is_compressed(source):
+        converted = prepare_iso.converted_iso(source, expected_size)
+        if converted is None:
+            raise LauncherError(
+                "This CSO or CHD image hasn't been unpacked yet. Set the game "
+                "up again.",
+                PLAY_NOT_BUILT,
+            )
+        source = converted
+    return check_iso(source, expected_size, PLAY_ISO_UNUSABLE)
 
 
 def data_directory(args: argparse.Namespace) -> Path | None:
@@ -329,7 +374,7 @@ def play(args: argparse.Namespace, extra: list[str]) -> int:
             PLAY_NOT_BUILT,
         )
     require_ascii(installation, "The game's folder", PLAY_PATH_UNSUPPORTED)
-    iso = check_iso(args.game, int(config["disc"]["iso_size"]), PLAY_ISO_UNUSABLE)
+    iso = playable_iso(args.game, int(config["disc"]["iso_size"]))
     data = data_directory(args)
     if data is None:
         raise LauncherError("Pass --data DIR for the game's settings and saves.", 2)
@@ -347,6 +392,8 @@ def play(args: argparse.Namespace, extra: list[str]) -> int:
     environment["SR_FONTDIR"] = str(installation / "font")
     environment["SR_D3D12_PSO_KEYS"] = str(data / "cache" / "pso_keys.bin")
     environment.setdefault("SR_MODULE_LOG", "1")
+    if args.window is not None:
+        environment["SR_FULLSCREEN"] = "1" if args.window == "fullscreen" else "0"
 
     mode = "--configure" if args.show_setup else "--play"
     log_path = rotate_logs(data / "logs")
@@ -377,7 +424,7 @@ def parse_args(argv: list[str]) -> tuple[argparse.Namespace, list[str]]:
     )
     parser.add_argument(
         "--game", type=Path, required=True, metavar="ISO",
-        help="the supported ULUS-10077 USA v1.00 disc image",
+        help="the supported ULUS-10077 USA v1.00 disc image (ISO, CSO or CHD)",
     )
     parser.add_argument(
         "--data", type=Path, metavar="DIR",
@@ -392,9 +439,21 @@ def parse_args(argv: list[str]) -> tuple[argparse.Namespace, list[str]]:
         "--show-setup", action="store_true",
         help="with --play: open the game's graphics and controller windows first",
     )
+    window = parser.add_mutually_exclusive_group()
+    window.add_argument(
+        "--fullscreen", dest="window", action="store_const", const="fullscreen",
+        help="with --play: always start full screen",
+    )
+    window.add_argument(
+        "--windowed", dest="window", action="store_const", const="windowed",
+        help="with --play: always start in a window",
+    )
     args, extra = parser.parse_known_args(argv)
-    if args.prepare and (extra or args.show_setup):
-        parser.error("--show-setup and game options are only used with --play")
+    if args.prepare and (extra or args.show_setup or args.window):
+        parser.error(
+            "--show-setup, --fullscreen, --windowed and game options are only "
+            "used with --play"
+        )
     if args.play and args.toolkit is not None:
         parser.error("--toolkit is only used with --prepare")
     return args, extra

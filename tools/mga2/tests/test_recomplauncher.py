@@ -52,6 +52,29 @@ class ArgumentTests(unittest.TestCase):
                 recomplauncher.parse_args(["--prepare", "--game", "g.iso", option])
 
 
+class WindowTests(unittest.TestCase):
+    def test_window_options_are_play_only_and_exclusive(self) -> None:
+        args, _ = recomplauncher.parse_args(
+            ["--play", "--game", "g.iso", "--fullscreen"])
+        self.assertEqual(args.window, "fullscreen")
+        args, _ = recomplauncher.parse_args(["--play", "--game", "g.iso"])
+        self.assertIsNone(args.window)
+        for argv in (
+            ["--prepare", "--game", "g.iso", "--windowed"],
+            ["--play", "--game", "g.iso", "--fullscreen", "--windowed"],
+        ):
+            with redirect_stderr(StringIO()), self.assertRaises(SystemExit):
+                recomplauncher.parse_args(argv)
+
+    def test_unconverted_chd_asks_for_setup_again(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            image = Path(temporary) / "game.chd"
+            image.write_bytes(b"MComprHD" + bytes(120))
+            with self.assertRaises(recomplauncher.LauncherError) as caught:
+                recomplauncher.playable_iso(image, 917307392)
+            self.assertEqual(caught.exception.code, recomplauncher.PLAY_NOT_BUILT)
+
+
 class ProgressTests(unittest.TestCase):
     def test_install_steps_become_progress_lines(self) -> None:
         lines = progress_lines([

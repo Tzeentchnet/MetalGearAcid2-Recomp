@@ -275,10 +275,11 @@ echo   install.bat [--iso ISO_OR_ZIP] [other options]
 echo.
 echo Drag and drop a supported ISO or ZIP onto install.bat, or pass it as the
 echo first positional argument. A ZIP must contain exactly one ISO and is
-echo extracted beside the archive for installation and later gameplay.
+echo extracted beside the archive for installation and later gameplay. A CSO
+echo or CHD image is converted once to an ISO in build\mga2\iso.
 echo.
 echo Options:
-echo   --iso PATH          Supported ULUS-10077 USA v1.00 ISO or ZIP.
+echo   --iso PATH          Supported ULUS-10077 USA v1.00 ISO, CSO, CHD or ZIP.
 echo                       Default: "Metal Gear Acid 2 (USA).iso" beside this script.
 echo   --toolkit PATH      psp-recomp checkout.
 echo                       Default: PSP_RECOMP_DIR or ..\psp-recomp.

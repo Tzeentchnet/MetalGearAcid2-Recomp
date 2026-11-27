@@ -1,5 +1,4 @@
 diff --git a/src/rt/driver.c b/src/rt/driver.c
-index 6a43f28..f8f1fab 100644
 --- a/src/rt/driver.c
 +++ b/src/rt/driver.c
 @@ -195,15 +195,30 @@ int main(int argc, char **argv) {
@@ -50,3 +49,209 @@ index 6a43f28..f8f1fab 100644
          return 2;
      }
      {
+diff --git a/src/rt/gpu_d3d12/device.cpp b/src/rt/gpu_d3d12/device.cpp
+--- a/src/rt/gpu_d3d12/device.cpp
++++ b/src/rt/gpu_d3d12/device.cpp
+@@ -25,6 +25,7 @@
+ #include "../input_sdl.h"
+ extern "C" {
+ #include "../recomp.h"
++#include "../window_mode.h"
+ }
+ 
+ #define PSP_W 480
+@@ -410,7 +411,8 @@ int ged3d12_window_init(const char *title) {
+     s_sdl_initialized = 1;
+     s_window = SDL_CreateWindow(
+         title ? title : "PSP Recomp", PSP_W * 2, PSP_H * 2,
+-        SDL_WINDOW_RESIZABLE);
++        SDL_WINDOW_RESIZABLE |
++            (sr_start_fullscreen() ? SDL_WINDOW_FULLSCREEN : 0));
+     if (!s_window) {
+         fprintf(stderr, "ged3d12: SDL_CreateWindow failed: %s\n", SDL_GetError());
+         ged3d12_window_shutdown();
+diff --git a/src/rt/gpu_sdl3vk/sdl3vk.c b/src/rt/gpu_sdl3vk/sdl3vk.c
+--- a/src/rt/gpu_sdl3vk/sdl3vk.c
++++ b/src/rt/gpu_sdl3vk/sdl3vk.c
+@@ -14,6 +14,7 @@
+ 
+ #include "sdl3vk.h"
+ #include "../input_sdl.h"
++#include "../window_mode.h"
+ 
+ #include <SDL3/SDL.h>
+ #include <SDL3/SDL_vulkan.h>
+@@ -199,7 +200,8 @@ int sdl3vk_init(const char *title) {
+     }
+     s_win = SDL_CreateWindow(title ? title : "PSP Recomp",
+                              PSP_W * 2, PSP_H * 2,
+-                             SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE);
++                             SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE |
++                                 (sr_start_fullscreen() ? SDL_WINDOW_FULLSCREEN : 0));
+     if (!s_win) {
+         fprintf(stderr, "sdl3vk: SDL_CreateWindow failed: %s\n", SDL_GetError());
+         return 0;
+diff --git a/src/rt/input_config.c b/src/rt/input_config.c
+--- a/src/rt/input_config.c
++++ b/src/rt/input_config.c
+@@ -92,6 +92,74 @@ static const NameValue s_pad_names[] = {
+     {"right_stick", SR_PAD_RIGHT_STICK},
+ };
+ 
++/* Shown in the controller window for RECOMPLAUNCHER_PAD=xbox or playstation.
++ * The file is always written with the canonical names above. */
++static const NameValue s_xbox_pad_names[] = {
++    {"a", SR_PAD_SOUTH},
++    {"b", SR_PAD_EAST},
++    {"x", SR_PAD_WEST},
++    {"y", SR_PAD_NORTH},
++    {"menu", SR_PAD_START},
++    {"view", SR_PAD_BACK},
++    {"lb", SR_PAD_LEFT_SHOULDER},
++    {"rb", SR_PAD_RIGHT_SHOULDER},
++    {"lt", SR_PAD_LEFT_TRIGGER},
++    {"rt", SR_PAD_RIGHT_TRIGGER},
++    {"dpad_up", SR_PAD_DPAD_UP},
++    {"dpad_right", SR_PAD_DPAD_RIGHT},
++    {"dpad_down", SR_PAD_DPAD_DOWN},
++    {"dpad_left", SR_PAD_DPAD_LEFT},
++    {"ls", SR_PAD_LEFT_STICK},
++    {"rs", SR_PAD_RIGHT_STICK},
++};
++
++static const NameValue s_playstation_pad_names[] = {
++    {"cross", SR_PAD_SOUTH},
++    {"circle", SR_PAD_EAST},
++    {"square", SR_PAD_WEST},
++    {"triangle", SR_PAD_NORTH},
++    {"options", SR_PAD_START},
++    {"share", SR_PAD_BACK},
++    {"l1", SR_PAD_LEFT_SHOULDER},
++    {"r1", SR_PAD_RIGHT_SHOULDER},
++    {"l2", SR_PAD_LEFT_TRIGGER},
++    {"r2", SR_PAD_RIGHT_TRIGGER},
++    {"dpad_up", SR_PAD_DPAD_UP},
++    {"dpad_right", SR_PAD_DPAD_RIGHT},
++    {"dpad_down", SR_PAD_DPAD_DOWN},
++    {"dpad_left", SR_PAD_DPAD_LEFT},
++    {"l3", SR_PAD_LEFT_STICK},
++    {"r3", SR_PAD_RIGHT_STICK},
++};
++
++/* Other spellings a launcher or a player may write, compared after dropping
++ * case, spaces, '_' and '-'. */
++static const NameValue s_pad_aliases[] = {
++    {"a", SR_PAD_SOUTH}, {"cross", SR_PAD_SOUTH},
++    {"b", SR_PAD_EAST}, {"circle", SR_PAD_EAST},
++    {"x", SR_PAD_WEST}, {"square", SR_PAD_WEST},
++    {"y", SR_PAD_NORTH}, {"triangle", SR_PAD_NORTH},
++    {"menu", SR_PAD_START}, {"options", SR_PAD_START},
++    {"select", SR_PAD_BACK}, {"view", SR_PAD_BACK},
++    {"share", SR_PAD_BACK}, {"create", SR_PAD_BACK},
++    {"leftshoulder", SR_PAD_LEFT_SHOULDER}, {"lb", SR_PAD_LEFT_SHOULDER},
++    {"l1", SR_PAD_LEFT_SHOULDER}, {"leftbumper", SR_PAD_LEFT_SHOULDER},
++    {"rightshoulder", SR_PAD_RIGHT_SHOULDER}, {"rb", SR_PAD_RIGHT_SHOULDER},
++    {"r1", SR_PAD_RIGHT_SHOULDER}, {"rightbumper", SR_PAD_RIGHT_SHOULDER},
++    {"lefttrigger", SR_PAD_LEFT_TRIGGER}, {"lt", SR_PAD_LEFT_TRIGGER},
++    {"l2", SR_PAD_LEFT_TRIGGER},
++    {"righttrigger", SR_PAD_RIGHT_TRIGGER}, {"rt", SR_PAD_RIGHT_TRIGGER},
++    {"r2", SR_PAD_RIGHT_TRIGGER},
++    {"dpadup", SR_PAD_DPAD_UP}, {"dpup", SR_PAD_DPAD_UP},
++    {"dpadright", SR_PAD_DPAD_RIGHT}, {"dpright", SR_PAD_DPAD_RIGHT},
++    {"dpaddown", SR_PAD_DPAD_DOWN}, {"dpdown", SR_PAD_DPAD_DOWN},
++    {"dpadleft", SR_PAD_DPAD_LEFT}, {"dpleft", SR_PAD_DPAD_LEFT},
++    {"leftstick", SR_PAD_LEFT_STICK}, {"ls", SR_PAD_LEFT_STICK},
++    {"l3", SR_PAD_LEFT_STICK}, {"leftthumb", SR_PAD_LEFT_STICK},
++    {"rightstick", SR_PAD_RIGHT_STICK}, {"rs", SR_PAD_RIGHT_STICK},
++    {"r3", SR_PAD_RIGHT_STICK}, {"rightthumb", SR_PAD_RIGHT_STICK},
++};
++
+ static const NameValue s_mouse_names[] = {
+     {"left", SR_MOUSE_LEFT},
+     {"right", SR_MOUSE_RIGHT},
+@@ -261,10 +329,28 @@ static int parse_key_token(const char *text) {
+         s_key_names, sizeof(s_key_names) / sizeof(s_key_names[0]), text);
+ }
+ 
++static int find_pad_alias(const char *text) {
++    char compact[64];
++    size_t used = 0;
++    for (; *text && used + 1 < sizeof(compact); text++) {
++        unsigned char c = (unsigned char)*text;
++        if (c == ' ' || c == '_' || c == '-') continue;
++        compact[used++] = (char)tolower(c);
++    }
++    compact[used] = 0;
++    for (size_t i = 0; i < sizeof(s_pad_aliases) / sizeof(s_pad_aliases[0]); i++)
++        if (strcmp(compact, s_pad_aliases[i].name) == 0)
++            return s_pad_aliases[i].value;
++    return -1;
++}
++
+ static int parse_pad_token(const char *text) {
++    int value;
+     if (text_equal(text, "none")) return SR_PAD_NONE;
+-    return find_name(
++    value = find_name(
+         s_pad_names, sizeof(s_pad_names) / sizeof(s_pad_names[0]), text);
++    if (value >= 0) return value;
++    return find_pad_alias(text);
+ }
+ 
+ static int parse_mouse_token(const char *text) {
+@@ -707,14 +793,20 @@ int sr_input_config_format_gamepad_binding(
+     int action,
+     char *text,
+     size_t text_size) {
++    const char *pad = getenv("RECOMPLAUNCHER_PAD");
++    const NameValue *names = s_pad_names;
++    size_t name_count = sizeof(s_pad_names) / sizeof(s_pad_names[0]);
+     if (!config || action < 0 || action >= SR_INPUT_ACTIONS) return 0;
++    if (pad && text_equal(pad, "xbox")) {
++        names = s_xbox_pad_names;
++        name_count = sizeof(s_xbox_pad_names) / sizeof(s_xbox_pad_names[0]);
++    } else if (pad && text_equal(pad, "playstation")) {
++        names = s_playstation_pad_names;
++        name_count =
++            sizeof(s_playstation_pad_names) / sizeof(s_playstation_pad_names[0]);
++    }
+     return format_binding(
+-        &config->gamepad[action],
+-        s_pad_names,
+-        sizeof(s_pad_names) / sizeof(s_pad_names[0]),
+-        0,
+-        text,
+-        text_size);
++        &config->gamepad[action], names, name_count, 0, text, text_size);
+ }
+ 
+ static int write_binding(
+diff --git a/src/rt/window_mode.h b/src/rt/window_mode.h
+new file mode 100644
+--- /dev/null
++++ b/src/rt/window_mode.h
+@@ -0,0 +1,24 @@
++/* Whether the game window starts full screen. */
++#ifndef PSP_RECOMP_WINDOW_MODE_H
++#define PSP_RECOMP_WINDOW_MODE_H
++
++#include <ctype.h>
++#include <stdlib.h>
++#include <string.h>
++
++/* SR_FULLSCREEN=1 or 0 decides. Otherwise the window starts full screen
++ * when RecompLauncher runs in Big Picture mode (RECOMPLAUNCHER_MODE=bigpicture). F11 toggles
++ * it in the D3D12 and Vulkan backends. */
++static inline int sr_start_fullscreen(void) {
++    static const char bigpicture[] = "bigpicture";
++    const char *value = getenv("SR_FULLSCREEN");
++    size_t i;
++    if (value && value[0]) return strcmp(value, "0") != 0;
++    value = getenv("RECOMPLAUNCHER_MODE");
++    if (!value) return 0;
++    for (i = 0; bigpicture[i]; i++)
++        if (tolower((unsigned char)value[i]) != bigpicture[i]) return 0;
++    return value[i] == 0;
++}
++
++#endif
